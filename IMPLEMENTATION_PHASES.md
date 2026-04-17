@@ -165,7 +165,7 @@ This document breaks down the implementation into executable phases for developm
 
 ## Phase 5: Routing Logic
 
-**Goal**: Implement backend selection based on file extension
+**Goal**: Implement backend selection based on file extension and document-specific routing rules
 
 **Tasks**:
 1. Create extension parser
@@ -177,7 +177,13 @@ This document breaks down the implementation into executable phases for developm
    - Return (primary, fallback) tuple
    - For Docling-preferred formats, fallback is Tika
    - For Tika-only formats, fallback is none
-3. For `PUT /detect/stream`
+3. Define extension point for document-specific routing
+   - Allow known document patterns to override extension-only routing
+   - Support matching by filename pattern, metadata hints, MIME type, and lightweight content inspection
+   - Implement a lightweight classifier/detection function for document-specific routing
+   - Keep rules in code as matchers/handlers or a routing dictionary/registry
+   - Return a custom extractor route when a document-specific rule matches
+4. For `PUT /detect/stream`
    - Always route to Tika
 
 **Dependencies**: Phase 4

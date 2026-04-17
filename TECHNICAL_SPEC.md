@@ -22,9 +22,37 @@ This document provides detailed technical requirements for implementing CrossPat
 ## Routing Logic
 
 ### Request Type Determination
-The proxy determines which backend(s) to call based on file extension and request path.
+The proxy determines which backend(s) or extractor pipeline(s) to call based on request path, file extension, and document-specific routing rules.
 
 If the incoming request does not provide a reliable filename or extension signal, the proxy must default to Tika-first handling rather than guessing a Docling-preferred route.
+
+### Document-Specific Routing
+CrossPath must support routing for known document patterns where generic extraction is insufficient.
+
+Examples include:
+- PDFs with a known recurring business structure
+- XLSX or CSV exports with well-defined layouts
+- organization-specific templates that benefit from custom parsing logic
+
+For these cases, CrossPath should:
+- detect the document pattern using filename rules, metadata hints, MIME type, and/or lightweight content inspection
+- route the document to a custom extractor or normalization pipeline when a matching rule is found
+- fall back to the standard Docling or Tika path when no custom rule matches or when the custom extractor fails
+- preserve outward Tika-compatible behavior on `/meta` and `/tika`
+
+### Rule Definition Model
+Document-specific routing rules should be defined in code.
+
+The intended model is:
+- a lightweight document classification or detection function that inspects the file extension, filename, MIME hints, and selected content/header bytes
+- a code-defined registry or dictionary of matchers and routing targets
+- deterministic routing decisions based on the first matching rule or explicit rule priority
+
+Example pattern:
+- if file type is PDF and the extracted header or leading content starts with `Relatorio de Contas`, use a custom processor
+- otherwise continue through the normal Docling or Tika pipeline
+
+This should remain lightweight and request-scoped. CrossPath should not require a database or external rule store for document-specific routing.
 
 **For `PUT /detect/stream`:**
 - Always call Tika Server for MIME type detection (primary)
@@ -51,9 +79,10 @@ If the incoming request does not provide a reliable filename or extension signal
 ### Fallback Behavior
 1. **Docling primary formats**: if Docling does not support the file or fails, route to Tika.
 2. **Tika primary formats and unknown formats**: do not fall back to Docling.
-3. **No backend available**: return appropriate Tika-compatible error status (typically 422 or 500 depending on failure mode).
-4. **One backend unavailable** (during /readyz): log and flag; other backend takes requests.
-5. **Both backends unavailable**: return an endpoint-compatible failure for extraction requests and an unhealthy status for readiness checks.
+3. **Custom extractor routes**: if a custom extractor is selected and fails, fall back according to the configured rule for that document type; this may mean retrying with Docling or Tika.
+4. **No backend available**: return appropriate Tika-compatible error status (typically 422 or 500 depending on failure mode).
+5. **One backend unavailable** (during /readyz): log and flag; other backend takes requests.
+6. **Both backends unavailable**: return an endpoint-compatible failure for extraction requests and an unhealthy status for readiness checks.
 
 ---
 
@@ -149,18 +178,18 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 
 ## Configuration via Environment Variables
 
-| Variable                     | Type   | Default           | Description                                                  |
-| ---------------------------- | ------ | ----------------- | ------------------------------------------------------------ |
-| `DOCLING_SERVICE_URL`        | string | (required)        | HTTP endpoint of Docling Serve (e.g., `http://docling:5000`) |
-| `DOCLING_SERVICE_TIMEOUT_MS` | int    | 30000             | Request timeout for Docling in milliseconds                  |
-| `TIKA_SERVICE_URL`           | string | (required)        | HTTP endpoint of Tika Server (e.g., `http://tika:9998`)      |
-| `TIKA_SERVICE_TIMEOUT_MS`    | int    | 30000             | Request timeout for Tika in milliseconds                     |
-| `BUFFER_THRESHOLD_BYTES`     | int    | 52428800          | Threshold for spooling to temp file (50 MB default)          |
-| `TEMP_DIR`                   | string | `/tmp/tika-proxy` | Directory for temporary files                                |
-| `TEMP_FILE_TTL_MINUTES`      | int    | 360               | Cleanup TTL for temp files in minutes (6 hours default)      |
-| `PORT`                       | int    | 5000              | Listen port for proxy                                        |
+| Variable                     | Type   | Default                               | Description                                                     |
+| ---------------------------- | ------ | ------------------------------------- | --------------------------------------------------------------- |
+| `DOCLING_SERVICE_URL`        | string | (required)                            | HTTP endpoint of Docling Serve (e.g., `http://docling:5000`)    |
+| `DOCLING_SERVICE_TIMEOUT_MS` | int    | 30000                                 | Request timeout for Docling in milliseconds                     |
+| `TIKA_SERVICE_URL`           | string | (required)                            | HTTP endpoint of Tika Server (e.g., `http://tika:9998`)         |
+| `TIKA_SERVICE_TIMEOUT_MS`    | int    | 30000                                 | Request timeout for Tika in milliseconds                        |
+| `BUFFER_THRESHOLD_BYTES`     | int    | 52428800                              | Threshold for spooling to temp file (50 MB default)             |
+| `TEMP_DIR`                   | string | `/tmp/tika-proxy`                     | Directory for temporary files                                   |
+| `TEMP_FILE_TTL_MINUTES`      | int    | 360                                   | Cleanup TTL for temp files in minutes (6 hours default)         |
+| `PORT`                       | int    | 5000                                  | Listen port for proxy                                           |
 | `WORKERS`                    | int    | conservative deployment-defined value | Worker process count for Uvicorn or Gunicorn/Uvicorn deployment |
-| `LOG_LEVEL`                  | string | `INFO`            | Log level (DEBUG, INFO, WARN, ERROR)                         |
+| `LOG_LEVEL`                  | string | `INFO`                                | Log level (DEBUG, INFO, WARN, ERROR)                            |
 
 ---
 
@@ -196,12 +225,10 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 - [ ] Advanced metadata normalization (flattening, field canonicalization)
 - [ ] Conflict resolution across backends (which source to trust for overlapping metadata)
 - [ ] Support for custom extraction profiles (e.g., OCR tuning, language settings)
+- [ ] Implement document-specific routing rules for known business document patterns
+- [ ] Support custom extractors for specific PDF, XLSX, CSV, and export formats
+- [ ] Add lightweight document classification/matching before extractor selection
 - [ ] Response streaming (for very large extracted texts)
-
-### Long Term
-- [ ] Embedded vector generation (light wrapper around embedding services)
-- [ ] Custom ManifoldCF connector (if HTTP proxy becomes bottleneck)
-- [ ] Multi-region deployment (geo-distribution, failover)
 
 ---
 

@@ -26,6 +26,7 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 ### In scope
 - Tika-compatible HTTP API
 - Routing to Docling or Tika
+- Routing to custom extractors for recognized document patterns
 - Fallback logic
 - Request buffering/spooling
 - Metadata normalization
@@ -67,8 +68,12 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - [ ] `/detect/stream` uses Tika detection by default
 - [ ] `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.md`, `.html`, `.xhtml` try Docling first
 - [ ] legacy formats like `.doc`, `.ppt`, `.xls`, `.rtf`, `.msg` use Tika first
+- [ ] known document patterns can override extension-only routing and select custom extractors
+- [ ] document-specific rules are defined in code via matchers/handlers rather than an external rule store
+- [ ] a lightweight detection function can classify the file before final route selection
 - [ ] if Docling does not support a file or fails for a preferred format, fallback to Tika
 - [ ] Tika-primary formats do not fall back to Docling
+- [ ] custom extractor routes define explicit fallback behavior
 - [ ] fallback behavior is logged and measurable
 
 ### Buffering
@@ -132,3 +137,5 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - Concurrency model: use multiple worker processes, but keep worker counts conservative because document parsing is expensive and the external backends are likely to be the throughput bottleneck
 - Routing input rule: use filename/extension when reliably available from the inbound request context; otherwise default to Tika-first handling
 - Initial Docling integration target: `POST` to the official Docling Serve conversion endpoint, starting from `/v1/convert/source` and adapting only if deployment-specific versioning or routing requires a different base path
+- Core planned capability: support document-specific routing and custom extractors for known document structures while preserving Tika-compatible outward behavior
+- Rule definition model: implement document-specific routing in code through a classifier/matcher function and a registry or dictionary of routing decisions

@@ -16,6 +16,8 @@ Within ManifoldCF's extraction path, CrossPath sits between the `tikaservice` tr
 
 `ManifoldCF tikaservice -> CrossPath -> Docling / Tika`
 
+CrossPath may also route recognized document patterns to custom extractors when generic extraction is not sufficient. These rules are intended to be defined in code, using lightweight detection logic and a routing registry rather than an external rule database.
+
 CrossPath is responsible for:
 
 - exposing Tika-compatible endpoints: `PUT /meta`, `PUT /tika`, `PUT /detect/stream`
@@ -29,6 +31,7 @@ CrossPath is responsible for:
 In scope for this repository:
 
 - the Python proxy service
+- document-specific extraction rules and custom extractor orchestration
 - compatibility with ManifoldCF `tikaservice`
 - routing, buffering, fallback, normalization, and observability
 - orchestration of Docling Serve and Tika Server as external services
@@ -43,7 +46,7 @@ Out of scope for this repository:
 
 ## Design Direction
 
-CrossPath is intended to remain a small compatibility and orchestration layer rather than a heavy parser itself.
+CrossPath is intended to remain a small compatibility and orchestration layer rather than a heavy generic parser itself.
 
 Current direction:
 
@@ -52,4 +55,4 @@ Current direction:
 - deployment: containerized
 - extractors: Docling Serve and Apache Tika as external services
 
-Longer term, the proxy may evolve into a smarter document normalization layer for known formats such as spreadsheets and structured exports, while still returning plain text and metadata in a Tika-compatible way for ManifoldCF.
+Document-specific handling is a core planned capability. CrossPath should support known file patterns such as specific PDFs, spreadsheets, and structured exports, route them to custom extractors or normalization logic, and still return plain text and metadata in a Tika-compatible way for ManifoldCF.
