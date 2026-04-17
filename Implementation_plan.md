@@ -106,6 +106,7 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - [ ] unit tests for routing, normalization, status mapping, buffering
 - [ ] integration tests for `/meta`, `/tika`, `/detect/stream`
 - [ ] integration test for Docling failure → Tika fallback
+- [ ] integration test for known document pattern → custom extractor route
 - [ ] integration test for Tika failure handling with Tika-compatible status/response behavior
 
 ---

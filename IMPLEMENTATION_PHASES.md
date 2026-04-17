@@ -224,7 +224,7 @@ This document breaks down the implementation into executable phases for developm
 
 **Verification**:
 - Text is normalized (line endings, UTF-8)
-- Metadata is returned as Tika-compatible JSON without introducing incompatible proxy-specific body fields
+- Metadata is returned in a Tika-compatible negotiated representation without introducing incompatible proxy-specific body fields
 - Status codes match expected behavior
 
 ---
@@ -271,9 +271,9 @@ This document breaks down the implementation into executable phases for developm
    - Call primary backend via client (Phase 4)
    - On failure, fallback to secondary (Phase 7)
    - Normalize metadata response (Phase 6)
-   - Return formatted JSON response with correct status code
+   - Return Tika-compatible negotiated metadata response with correct status code
 2. Wire `PUT /tika` endpoint
-   - Same flow as `/meta` but return text/plain
+   - Same flow as `/meta` but return Tika-compatible negotiated content response, defaulting to plain text
 3. Wire `PUT /detect/stream` endpoint
    - Buffer request body (Phase 3)
    - Always route to Tika
@@ -311,6 +311,7 @@ This document breaks down the implementation into executable phases for developm
    - `PUT /tika` with sample documents
    - `PUT /detect/stream` with sample documents
    - Fallback behavior (Docling fails → Tika succeeds)
+   - Custom routing behavior (known document pattern → custom extractor route)
    - Error cases (unsupported format → 422, timeout/failure → Tika-compatible failure behavior)
    - Health endpoints (`/healthz`, `/readyz`)
 3. Manual testing

@@ -10,7 +10,7 @@ These must be set or the proxy will not start.
 
 ### DOCLING_SERVICE_URL
 - **Type**: String (URL)
-- **Example**: `http://docling:5000` or `http://192.168.1.10:5000`
+- **Example**: `http://docling:5001` or `http://192.168.1.10:5001`
 - **Description**: HTTP endpoint of Docling Serve container
 - **Used by**: Docling client for routing documents to Docling
 - **Error handling**: Proxy fails to start if not set or invalid URL format
@@ -41,7 +41,7 @@ These must be set or the proxy will not start.
 - **Range**: 1000–600000 (1 second to 10 minutes)
 - **Description**: HTTP request timeout when calling Tika Server
 - **Used by**: Tika client to enforce timeout on requests
-- **Behavior**: If Tika does not respond within this time, request is aborted and returns 503 (or fallback to secondary if applicable)
+- **Behavior**: If Tika does not respond within this time, request is aborted and mapped to Tika-compatible failure behavior (or fallback to secondary if applicable)
 - **Example**: `TIKA_SERVICE_TIMEOUT_MS=60000` (60 seconds)
 
 ### BUFFER_THRESHOLD_BYTES
@@ -123,7 +123,7 @@ These must be set or the proxy will not start.
 
 ```bash
 # Backend services (REQUIRED)
-DOCLING_SERVICE_URL=http://docling:5000
+DOCLING_SERVICE_URL=http://docling:5001
 TIKA_SERVICE_URL=http://tika:9998
 
 # Timeouts (optional, defaults shown)
@@ -152,7 +152,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      DOCLING_SERVICE_URL: http://docling:5000
+      DOCLING_SERVICE_URL: http://docling:5001
       TIKA_SERVICE_URL: http://tika:9998
       DOCLING_SERVICE_TIMEOUT_MS: 30000
       TIKA_SERVICE_TIMEOUT_MS: 30000
@@ -222,7 +222,7 @@ At startup, the proxy will:
 
 ### Development (Local Docker)
 ```bash
-DOCLING_SERVICE_URL=http://docling:5000
+DOCLING_SERVICE_URL=http://docling:5001
 TIKA_SERVICE_URL=http://tika:9998
 DOCLING_SERVICE_TIMEOUT_MS=30000
 TIKA_SERVICE_TIMEOUT_MS=30000
@@ -236,7 +236,7 @@ LOG_LEVEL=DEBUG
 
 ### Production (longer timeouts for OCR)
 ```bash
-DOCLING_SERVICE_URL=http://docling.internal:5000
+DOCLING_SERVICE_URL=http://docling.internal:5001
 TIKA_SERVICE_URL=http://tika.internal:9998
 DOCLING_SERVICE_TIMEOUT_MS=120000
 TIKA_SERVICE_TIMEOUT_MS=120000
@@ -250,7 +250,7 @@ LOG_LEVEL=WARN
 
 ### Memory-Constrained (e.g., edge device)
 ```bash
-DOCLING_SERVICE_URL=http://docling:5000
+DOCLING_SERVICE_URL=http://docling:5001
 TIKA_SERVICE_URL=http://tika:9998
 DOCLING_SERVICE_TIMEOUT_MS=60000
 TIKA_SERVICE_TIMEOUT_MS=60000

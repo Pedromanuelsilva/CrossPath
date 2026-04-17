@@ -180,7 +180,7 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 
 | Variable                     | Type   | Default                               | Description                                                     |
 | ---------------------------- | ------ | ------------------------------------- | --------------------------------------------------------------- |
-| `DOCLING_SERVICE_URL`        | string | (required)                            | HTTP endpoint of Docling Serve (e.g., `http://docling:5000`)    |
+| `DOCLING_SERVICE_URL`        | string | (required)                            | HTTP endpoint of Docling Serve (e.g., `http://docling:5001`)    |
 | `DOCLING_SERVICE_TIMEOUT_MS` | int    | 30000                                 | Request timeout for Docling in milliseconds                     |
 | `TIKA_SERVICE_URL`           | string | (required)                            | HTTP endpoint of Tika Server (e.g., `http://tika:9998`)         |
 | `TIKA_SERVICE_TIMEOUT_MS`    | int    | 30000                                 | Request timeout for Tika in milliseconds                        |
@@ -204,6 +204,7 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 - `tika_proxy_request_duration_seconds{method, endpoint, backend}`: histogram
 - `tika_proxy_backend_fallback_total{from, to}`: counter (Docling→Tika)
 - `tika_proxy_backend_selection{endpoint, backend}`: gauge (which backend chosen)
+- `tika_proxy_custom_route_total{route_name, outcome}`: counter (document-specific matcher/extractor selections and results)
 - `tika_proxy_buffer_spill_to_disk_total`: counter (times buffered file spilled to disk)
 - `tika_proxy_healthcheck_failures{backend}`: counter
 
@@ -243,6 +244,7 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 ### Integration Tests
 - End-to-end: `PUT /meta`, `PUT /tika`, `PUT /detect/stream` with real backends
 - Fallback behavior: Docling failure → Tika success
+- Custom routing behavior: known document pattern → custom extractor route
 - Health endpoints: `/healthz` and `/readyz` with backends up/down
 - Error cases: backend timeout/failure (should follow Tika-compatible failure behavior), unsupported format (422)
 
