@@ -1,4 +1,4 @@
-# Tika Proxy — Environment Variables Reference
+# CrossPath — Environment Variables Reference
 
 Complete reference for all environment variables and their usage.
 
@@ -95,6 +95,14 @@ These must be set or the proxy will not start.
 - **Docker**: Expose via `-p 8080:5000` in docker-compose.yml or `docker run`
 - **Note**: Do not use port 80 or 443 without running as root (not recommended in containers)
 
+### WORKERS
+- **Type**: Integer (process count)
+- **Default**: conservative deployment-defined value
+- **Description**: Number of FastAPI worker processes for Uvicorn or Gunicorn/Uvicorn deployment
+- **Used by**: container startup command / process manager
+- **Behavior**: Should be set conservatively because document parsing is expensive and Docling/Tika may be the actual bottleneck
+- **Example**: `WORKERS=2`
+
 ### LOG_LEVEL
 - **Type**: String (enum)
 - **Default**: `INFO`
@@ -129,6 +137,7 @@ TEMP_FILE_TTL_MINUTES=360
 
 # Proxy settings (optional, defaults shown)
 PORT=5000
+WORKERS=2
 LOG_LEVEL=INFO
 ```
 
@@ -139,7 +148,7 @@ LOG_LEVEL=INFO
 ```yaml
 services:
   proxy:
-    image: tika-proxy:latest
+    image: crosspath:${CROSSPATH_TAG:-latest}
     ports:
       - "5000:5000"
     environment:
@@ -151,6 +160,7 @@ services:
       TEMP_DIR: /tmp/tika-proxy
       TEMP_FILE_TTL_MINUTES: 360
       PORT: 5000
+      WORKERS: 2
       LOG_LEVEL: INFO
     volumes:
       - tika-temp:/tmp/tika-proxy
@@ -164,17 +174,16 @@ services:
       - tika
 
   docling:
-    image: docling-serve:latest
+    image: ${DOCLING_IMAGE:-ghcr.io/docling-project/docling-serve:latest}
     ports:
-      - "5001:5000"
+      - "5001:5001"
     # Adjust these based on your Docling Serve image configuration
 
   tika:
-    image: apache/tika:latest
+    image: ${TIKA_IMAGE:-your-custom-tika:latest}
     ports:
       - "9998:9998"
-    environment:
-      TIKA_OCR: "true"  # Enable OCR if image supports it
+    # Use your custom Tika image/configuration; when OCR is required, include OCR dependencies in the image
 
 volumes:
   tika-temp:
@@ -221,6 +230,7 @@ BUFFER_THRESHOLD_BYTES=52428800
 TEMP_DIR=/tmp/tika-proxy
 TEMP_FILE_TTL_MINUTES=360
 PORT=5000
+WORKERS=2
 LOG_LEVEL=DEBUG
 ```
 
@@ -234,6 +244,7 @@ BUFFER_THRESHOLD_BYTES=104857600
 TEMP_DIR=/var/lib/tika-proxy/temp
 TEMP_FILE_TTL_MINUTES=720
 PORT=5000
+WORKERS=2
 LOG_LEVEL=WARN
 ```
 
@@ -247,5 +258,6 @@ BUFFER_THRESHOLD_BYTES=10485760
 TEMP_DIR=/tmp/tika-proxy
 TEMP_FILE_TTL_MINUTES=180
 PORT=5000
+WORKERS=2
 LOG_LEVEL=INFO
 ```

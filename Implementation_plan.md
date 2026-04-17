@@ -1,8 +1,8 @@
-# Tika Proxy for ManifoldCF — Implementation Plan
+# CrossPath for ManifoldCF — Implementation Plan
 
 ## Goal
 
-Build a containerized **Tika-compatible proxy** that sits between **Apache ManifoldCF `tikaservice`** and external extractor services.
+Build **CrossPath**, a containerized **Tika-compatible proxy**, to sit between **Apache ManifoldCF `tikaservice`** and external extractor services.
 
 The proxy must expose the HTTP contract expected by ManifoldCF’s remote Tika service connector:
 
@@ -10,7 +10,7 @@ The proxy must expose the HTTP contract expected by ManifoldCF’s remote Tika s
 - `PUT /tika`
 - `PUT /detect/stream`
 
-ManifoldCF’s `tikaservice` connector calls those endpoints, expects `/meta` as JSON and `/tika` as plain text, and treats `503` as retryable. 
+ManifoldCF’s `tikaservice` connector calls those endpoints and expects Tika-compatible behavior, with `/meta` available as JSON when requested and `/tika` available as plain text by default.
 
 The proxy will internally route documents to:
 
@@ -49,9 +49,9 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 
 ### API compatibility
 - [ ] `PUT /meta` accepts raw file bytes
-- [ ] `PUT /meta` returns `application/json`
+- [ ] `PUT /meta` preserves Tika-compatible content negotiation and can return JSON when requested
 - [ ] `PUT /tika` accepts raw file bytes
-- [ ] `PUT /tika` returns `text/plain; charset=utf-8`
+- [ ] `PUT /tika` returns Tika-compatible output, defaulting to plain text
 - [ ] `PUT /detect/stream` accepts raw file bytes
 - [ ] `PUT /detect/stream` returns detected MIME type as plain text
 - [ ] `GET /healthz` returns process-alive status
@@ -61,8 +61,7 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - [ ] `200` used for successful extraction with body
 - [ ] `204` used when request is valid but no extractable output exists
 - [ ] `422` used for unsupported/encrypted/rejected documents
-- [ ] `503` used for backend timeout/unavailable/retryable failures
-- [ ] `500` used only for unexpected proxy bugs
+- [ ] `500` used for backend/proxy processing failures in line with Tika-compatible endpoint behavior
 
 ### Routing
 - [ ] `/detect/stream` uses Tika detection by default
@@ -81,11 +80,12 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 
 ### Normalization
 - [ ] all backend outputs are normalized into one internal model
-- [ ] `/tika` always returns canonical plain text
-- [ ] `/meta` always returns flattened JSON metadata
-- [ ] metadata includes `Content-Type`, `parser_used`, and proxy trace fields
+- [ ] `/tika` preserves Tika-compatible response semantics and plain-text output by default
+- [ ] `/meta` preserves Apache Tika-compatible response semantics, including negotiated JSON output
+- [ ] Docling metadata is transformed to match Tika output format
+- [ ] proxy traceability is carried in headers and logs without breaking Tika response compatibility
 - [ ] line endings normalized to `\n`
-- [ ] UTF-8 output guaranteed for `/tika`
+- [ ] UTF-8 output guaranteed for plain-text `/tika` responses
 
 ### Observability
 - [ ] structured JSON logs
@@ -101,7 +101,7 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - [ ] unit tests for routing, normalization, status mapping, buffering
 - [ ] integration tests for `/meta`, `/tika`, `/detect/stream`
 - [ ] integration test for Docling failure → Tika fallback
-- [ ] integration test for Tika timeout → `503`
+- [ ] integration test for Tika failure handling with Tika-compatible status/response behavior
 
 ---
 
@@ -121,3 +121,14 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 6. Normalize result
 7. Format response in Tika-compatible shape
 8. Return to ManifoldCF
+
+## Locked Implementation Decisions
+
+- Runtime: Python 3.13+
+- Web framework: FastAPI
+- Application server: Uvicorn or Gunicorn with Uvicorn workers
+- Deployment target: Docker container
+- Backend connectivity: internal network access to Docling Serve and Tika Server
+- Concurrency model: use multiple worker processes, but keep worker counts conservative because document parsing is expensive and the external backends are likely to be the throughput bottleneck
+- Routing input rule: use filename/extension when reliably available from the inbound request context; otherwise default to Tika-first handling
+- Initial Docling integration target: `POST` to the official Docling Serve conversion endpoint, starting from `/v1/convert/source` and adapting only if deployment-specific versioning or routing requires a different base path

@@ -1,4 +1,4 @@
-# Tika Proxy — Implementation Phases
+# CrossPath — Implementation Phases
 
 This document breaks down the implementation into executable phases for development agents.
 
@@ -26,9 +26,19 @@ This document breaks down the implementation into executable phases for developm
    - Register all required metrics (see TECHNICAL_SPEC.md, Observability)
    - Expose `/metrics` endpoint (standard Prometheus)
 5. Create HTTP request ID middleware/decorator
-   - Generate UUID v4 for each request
-   - Add to context/thread-local for downstream use
-   - Include in response headers
+    - Generate UUID v4 for each request
+    - Add to context/thread-local for downstream use
+    - Include in response headers
+6. Lock runtime choices in implementation
+   - Python 3.13+
+   - FastAPI application
+   - Uvicorn or Gunicorn with Uvicorn workers
+   - Docker-based deployment
+   - Internal network access to Docling Serve and Tika Server
+7. Define conservative process concurrency defaults
+   - Use multiple worker processes
+   - Keep worker count bounded because parsing is expensive and backends may be the bottleneck
+   - Make worker count configurable at deployment time
 
 **Dependencies**: None (foundational)
 
@@ -50,11 +60,11 @@ This document breaks down the implementation into executable phases for developm
    - Graceful shutdown handler
 2. Implement `PUT /meta` endpoint
    - Accept raw file bytes in request body
-   - Return `application/json` response
+   - Return Tika-compatible metadata response
    - Placeholder response (no backend calls yet)
 3. Implement `PUT /tika` endpoint
    - Accept raw file bytes in request body
-   - Return `text/plain; charset=utf-8` response
+   - Return Tika-compatible extracted-content response
    - Placeholder response (no backend calls yet)
 4. Implement `PUT /detect/stream` endpoint
    - Accept raw file bytes in request body
@@ -64,9 +74,9 @@ This document breaks down the implementation into executable phases for developm
    - Return 200 if process is alive
    - No backend calls
 6. Implement `GET /readyz` endpoint (readiness check)
-   - Check Docling availability (lightweight call)
-   - Check Tika availability (lightweight call)
-   - Return 200 if both OK, 200 with warning if one slow, 503 if both down
+   - Check Docling availability via `GET /health`
+   - Check Tika availability via `GET /` or `GET /tika`
+   - Return 200 if both OK, 200 with warning if one slow, 500 if both down
    - Populate response body with status JSON (optional but recommended)
 
 **Dependencies**: Phase 1
@@ -121,13 +131,16 @@ This document breaks down the implementation into executable phases for developm
 
 **Tasks**:
 1. Create Docling client
-   - HTTP PUT request to Docling `/convert` or appropriate endpoint (refer to Docling Serve docs)
-   - Pass file content and expect JSON response with extracted text and metadata
+   - Use HTTP `POST` to the official Docling Serve conversion endpoint, starting from `/v1/convert/source`
+   - Wrap incoming file bytes into Docling's JSON request model rather than forwarding raw bytes directly
+   - Use a file source payload that includes the filename and Base64-encoded content
+   - Expect JSON response with extracted text and metadata
    - Handle timeout (DOCLING_SERVICE_TIMEOUT_MS)
    - Return normalized response object
 2. Create Tika client
    - HTTP PUT requests to Tika `/meta` and `/tika` endpoints
    - Pass file content
+   - Request JSON from Tika `/meta` via `Accept: application/json`
    - Parse JSON response from Tika `/meta`
    - Parse plain text response from Tika `/tika`
    - Handle timeout (TIKA_SERVICE_TIMEOUT_MS)
@@ -156,8 +169,9 @@ This document breaks down the implementation into executable phases for developm
 
 **Tasks**:
 1. Create extension parser
-   - Extract file extension from request (via Content-Type filename param or custom header)
+   - Extract file extension from the inbound request context when a reliable filename or equivalent signal is available
    - Normalize to lowercase (e.g., ".PDF" → ".pdf")
+   - If no reliable extension signal is available, default routing to Tika-first behavior
 2. Create routing function
    - Map extension to primary backend and optional fallback backend (see TECHNICAL_SPEC.md, Routing Logic table)
    - Return (primary, fallback) tuple
@@ -186,28 +200,25 @@ This document breaks down the implementation into executable phases for developm
    - Ensure UTF-8 (substitute or strip invalid sequences)
    - Return as string
 2. Create metadata normalization (Phase 1 approach: minimal)
-   - Merge backend response with proxy fields:
-     - `parser_used`: "docling" or "tika"
-     - `Content-Type`: detected MIME type
-     - `X-Request-ID`: request UUID
-     - `X-Fallback-Used`: boolean
-   - Return as flattened JSON object (no nested structures yet)
+   - Ensure `/meta` preserves Apache Tika-compatible metadata response semantics, including negotiated JSON output
+   - Pass Tika `/meta` responses through without schema changes for the negotiated representation
+   - Transform Docling metadata into the same format expected from Tika
+   - Keep proxy trace data in headers and logs unless a field can be added without breaking Tika compatibility
 3. Create response formatters
-   - Format `/meta` response as JSON (with normalized metadata)
-   - Format `/tika` response as plain text (with normalized text)
+   - Format `/meta` response in a Tika-compatible negotiated representation
+   - Format `/tika` response in a Tika-compatible negotiated representation, defaulting to plain text
    - Format `/detect/stream` response as plain text (MIME type)
 4. Create status code mapping
    - Success with content → 200
    - Valid but no output → 204
    - Unsupported/encrypted → 422
-   - Backend timeout/unavailable → 503
-   - Unexpected proxy error → 500
+   - Processing/backend failure → 500
 
 **Dependencies**: Phase 4, Phase 5
 
 **Verification**:
 - Text is normalized (line endings, UTF-8)
-- Metadata is returned as JSON with proxy fields
+- Metadata is returned as Tika-compatible JSON without introducing incompatible proxy-specific body fields
 - Status codes match expected behavior
 
 ---
@@ -225,13 +236,13 @@ This document breaks down the implementation into executable phases for developm
    - Return error response if backend failure occurs with no secondary available
 2. Create error classification
    - Parse backend errors
-   - Classify as retryable (503) or not (422, 400, 500)
+   - Classify into Tika-compatible endpoint outcomes (422, 400, 500)
 3. Create error response builder
    - Return appropriate status code and message (per TECHNICAL_SPEC.md, Error Handling)
-   - Use Tika server's error format (plain text)
+   - Use plain text error responses without introducing a custom JSON error envelope
 4. Implement timeout handling
    - Catch timeout exceptions from backend calls
-   - Treat as retryable (503)
+   - Map to Tika-compatible failure behavior for the target endpoint
 
 **Dependencies**: Phase 4, Phase 6
 
@@ -294,7 +305,7 @@ This document breaks down the implementation into executable phases for developm
    - `PUT /tika` with sample documents
    - `PUT /detect/stream` with sample documents
    - Fallback behavior (Docling fails → Tika succeeds)
-   - Error cases (unsupported format → 422, timeout → 503)
+   - Error cases (unsupported format → 422, timeout/failure → Tika-compatible failure behavior)
    - Health endpoints (`/healthz`, `/readyz`)
 3. Manual testing
    - Full docker-compose with proxy, Docling, Tika running
@@ -353,11 +364,13 @@ This document breaks down the implementation into executable phases for developm
 ## Implementation Notes
 
 ### Suggested Tech Stack (not prescriptive)
-- **Language**: Python 3.11+ (fastapi/flask) or Node.js (express) — choose what team is most comfortable with
-- **HTTP**: requests library (Python) or axios/node-fetch (JS)
-- **Metrics**: prometheus-client (Python) or prom-client (JS)
-- **Logging**: structlog (Python) or winston (JS) for JSON logging
-- **Testing**: pytest (Python) or jest (JS)
+- **Language**: Python 3.13+
+- **Framework**: FastAPI
+- **Server**: Uvicorn or Gunicorn with Uvicorn workers
+- **HTTP**: Python HTTP client appropriate for FastAPI service integration
+- **Metrics**: prometheus-client
+- **Logging**: structured JSON logging for Python
+- **Testing**: pytest
 
 ### Parallelization
 - Phases 1–2 can start immediately (scaffolding)
