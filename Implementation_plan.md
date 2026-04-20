@@ -28,6 +28,7 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - Routing to Docling or Tika
 - Routing to custom extractors for recognized document patterns
 - Fallback logic
+- In-memory per-backend circuit breaker behavior
 - Request buffering/spooling
 - Metadata normalization
 - Plain-text extraction normalization
@@ -56,7 +57,7 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - [ ] `PUT /detect/stream` accepts raw file bytes
 - [ ] `PUT /detect/stream` returns detected MIME type as plain text
 - [ ] `GET /healthz` returns process-alive status
-- [ ] `GET /readyz` returns readiness based on backend availability checks
+- [ ] `GET /readyz` returns readiness based on backend availability checks, including degraded-but-operational vs unhealthy distinction
 
 ### HTTP behavior
 - [ ] `200` used for successful extraction with body
@@ -74,6 +75,7 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - [ ] if Docling does not support a file or fails for a preferred format, fallback to Tika
 - [ ] Tika-primary formats do not fall back to Docling
 - [ ] custom extractor routes define explicit fallback behavior
+- [ ] failing backends can be temporarily bypassed via in-memory circuit breaker logic
 - [ ] fallback behavior is logged and measurable
 
 ### Buffering
@@ -96,6 +98,7 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - [ ] structured JSON logs
 - [ ] request ID per request
 - [ ] metrics for request counts, backend selection, fallback count, latencies, failures
+- [ ] metrics for circuit breaker state transitions and open-state counts
 
 ### Deployment
 - [ ] Dockerfile builds runnable container
@@ -140,3 +143,4 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - Initial Docling integration target: `POST` to the official Docling Serve conversion endpoint, starting from `/v1/convert/source` and adapting only if deployment-specific versioning or routing requires a different base path
 - Core planned capability: support document-specific routing and custom extractors for known document structures while preserving Tika-compatible outward behavior
 - Rule definition model: implement document-specific routing in code through a classifier/matcher function and a registry or dictionary of routing decisions
+- Resilience model: use in-memory per-process circuit breakers for backend health protection; do not rely on Redis or external shared state

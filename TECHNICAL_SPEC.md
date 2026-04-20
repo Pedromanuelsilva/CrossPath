@@ -84,6 +84,25 @@ This should remain lightweight and request-scoped. CrossPath should not require 
 5. **One backend unavailable** (during /readyz): log and flag; other backend takes requests.
 6. **Both backends unavailable**: return an endpoint-compatible failure for extraction requests and an unhealthy status for readiness checks.
 
+### Circuit Breaker Behavior
+CrossPath should implement an in-memory circuit breaker per backend and per process.
+
+Purpose:
+- avoid repeatedly calling a backend that is known to be failing
+- reduce timeout amplification and worker exhaustion
+- improve fallback latency when one backend is temporarily unhealthy
+
+Behavior:
+- Track consecutive failures and/or timeout-driven failures per backend
+- Open the circuit when the configured failure threshold is reached
+- While open, skip calls to the failing backend and route directly to the configured fallback path when one exists
+- After a cooldown window, transition to half-open and allow a limited number of probe requests
+- Close the circuit again when probe requests succeed; reopen it if probe requests fail
+
+Scope:
+- circuit breaker state is local to each CrossPath process
+- no Redis or external coordination is required
+
 ---
 
 ## Error Handling & HTTP Status Codes
@@ -154,9 +173,9 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 ### `GET /readyz`
 **Purpose**: Readiness check (backend availability)
 **Response**:
-- **200 OK**: Both backends are reachable and responding
-- **200 OK with warning**: One backend unavailable; one is healthy (or in degraded state)
-- **500 Internal Server Error**: Both backends unreachable or unhealthy
+- **200 OK**: Service is operational for at least one valid extraction path
+- **200 OK (degraded)**: One or more backends unavailable, but CrossPath can still serve requests through remaining supported routes
+- **500 Internal Server Error**: No usable extraction path remains, or the proxy itself is unhealthy
 **Checks**:
 - Docling: use `GET /health`
 - Tika: use `GET /` or `GET /tika` as a lightweight liveness/readiness check
@@ -164,12 +183,20 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 - Fallback for Tika if needed: attempt lightweight request (e.g., `PUT /detect/stream` with empty body or test data)
 - Timeout: same as configured backend timeouts
 
+**Readiness Semantics**:
+- If both Docling and Tika are healthy, report `ready`
+- If one backend is unavailable but the remaining backend still provides at least one valid extraction path, report `degraded` with HTTP 200
+- If Tika is unavailable, treat the service as degraded only if the deployment intentionally accepts loss of Tika-only formats and MIME detection; otherwise report unhealthy
+- If no usable extraction path remains for the intended deployment, report `unhealthy` with HTTP 500
+- The response body should make the distinction explicit so orchestrators and operators can tell the difference between degraded and unusable
+
 **Response Body** (optional): JSON object
 ```json
 {
-  "status": "ready",
+  "status": "degraded",
   "docling": { "status": "ok", "latency_ms": 15 },
-  "tika": { "status": "warning", "error": "slow response" },
+  "tika": { "status": "down", "error": "timeout" },
+  "service_mode": "degraded_but_operational",
   "checks_timestamp": "2026-04-17T10:30:45Z"
 }
 ```
@@ -189,6 +216,9 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 | `TEMP_FILE_TTL_MINUTES`      | int    | 360                                   | Cleanup TTL for temp files in minutes (6 hours default)         |
 | `PORT`                       | int    | 5000                                  | Listen port for proxy                                           |
 | `WORKERS`                    | int    | conservative deployment-defined value | Worker process count for Uvicorn or Gunicorn/Uvicorn deployment |
+| `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | int | 5 | Consecutive backend failures before opening the circuit |
+| `CIRCUIT_BREAKER_OPEN_SECONDS` | int | 60 | Cooldown window before retrying a failed backend |
+| `CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES` | int | 1 | Maximum probe requests allowed while half-open |
 | `LOG_LEVEL`                  | string | `INFO`                                | Log level (DEBUG, INFO, WARN, ERROR)                            |
 
 ---
@@ -207,6 +237,8 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 - `tika_proxy_custom_route_total{route_name, outcome}`: counter (document-specific matcher/extractor selections and results)
 - `tika_proxy_buffer_spill_to_disk_total`: counter (times buffered file spilled to disk)
 - `tika_proxy_healthcheck_failures{backend}`: counter
+- `tika_proxy_circuit_breaker_state{backend, state}`: gauge
+- `tika_proxy_circuit_breaker_open_total{backend}`: counter
 
 ### Logs (structured JSON)
 - All logs: JSON format with fields: `timestamp`, `level`, `request_id`, `message`, `backend`, `duration_ms`, `status_code`
@@ -217,10 +249,11 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 ## Future Work
 
 ### Immediate (Next Phase)
-- [ ] Timeout handling refinement (granular per-backend, circuit breaker)
+- [ ] Timeout handling refinement (granular per-backend)
 - [ ] Input validation (Content-Length limits, reject empty bodies, validate headers)
 - [ ] Retry logic (configurable retries per backend, exponential backoff)
 - [ ] MIME type detection caching (by content hash or signature)
+- [ ] Implement per-backend in-memory circuit breaker behavior
 
 ### Medium Term
 - [ ] Advanced metadata normalization (flattening, field canonicalization)

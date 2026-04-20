@@ -39,6 +39,10 @@ This document breaks down the implementation into executable phases for developm
    - Use multiple worker processes
    - Keep worker count bounded because parsing is expensive and backends may be the bottleneck
    - Make worker count configurable at deployment time
+8. Define backend resilience configuration
+   - Add in-memory per-backend circuit breaker settings
+   - Keep circuit breaker state local to each process
+   - Do not require Redis or external shared coordination
 
 **Dependencies**: None (foundational)
 
@@ -47,6 +51,7 @@ This document breaks down the implementation into executable phases for developm
 - Logs output as valid JSON
 - Request IDs are unique UUIDs
 - `/metrics` endpoint is reachable
+- Circuit breaker configuration loads correctly
 
 ---
 
@@ -76,7 +81,9 @@ This document breaks down the implementation into executable phases for developm
 6. Implement `GET /readyz` endpoint (readiness check)
    - Check Docling availability via `GET /health`
    - Check Tika availability via `GET /` or `GET /tika`
-   - Return 200 if both OK, 200 with warning if one slow, 500 if both down
+   - Return 200 when service is operational, including degraded-but-operational mode
+   - Return 500 only when no usable extraction path remains or the proxy itself is unhealthy
+   - Include explicit readiness state in the response body (`ready`, `degraded`, `unhealthy`)
    - Populate response body with status JSON (optional but recommended)
 
 **Dependencies**: Phase 1
@@ -86,6 +93,7 @@ This document breaks down the implementation into executable phases for developm
 - Content-Type headers are correct
 - `/healthz` returns 200
 - `/readyz` detects backend availability
+- `/readyz` distinguishes ready vs degraded vs unhealthy correctly
 
 ---
 
@@ -243,10 +251,17 @@ This document breaks down the implementation into executable phases for developm
 2. Create error classification
    - Parse backend errors
    - Classify into Tika-compatible endpoint outcomes (422, 400, 500)
-3. Create error response builder
+3. Implement circuit breaker
+   - Track failures and timeouts per backend
+   - Open the breaker after a configurable failure threshold
+   - Skip calls to backends with an open breaker
+   - Allow limited half-open probes after a cooldown window
+   - Close on recovery and reopen on probe failure
+   - Keep state in memory per process
+4. Create error response builder
    - Return appropriate status code and message (per TECHNICAL_SPEC.md, Error Handling)
    - Use plain text error responses without introducing a custom JSON error envelope
-4. Implement timeout handling
+5. Implement timeout handling
    - Catch timeout exceptions from backend calls
    - Map to Tika-compatible failure behavior for the target endpoint
 
@@ -257,6 +272,9 @@ This document breaks down the implementation into executable phases for developm
 - Both backends failing returns appropriate error
 - Timeout from one backend triggers fallback
 - Fallback is logged and metrics updated
+- Repeated failures open the circuit breaker
+- Open circuit prevents repeated calls to a known-failing backend
+- Half-open probes allow backend recovery detection
 
 ---
 

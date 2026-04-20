@@ -103,6 +103,27 @@ These must be set or the proxy will not start.
 - **Behavior**: Should be set conservatively because document parsing is expensive and Docling/Tika may be the actual bottleneck
 - **Example**: `WORKERS=2`
 
+### CIRCUIT_BREAKER_FAILURE_THRESHOLD
+- **Type**: Integer
+- **Default**: `5`
+- **Description**: Number of consecutive backend failures before opening the in-memory circuit breaker for that backend
+- **Used by**: backend resilience logic
+- **Behavior**: Once the threshold is reached, the backend is temporarily bypassed until the cooldown window expires
+
+### CIRCUIT_BREAKER_OPEN_SECONDS
+- **Type**: Integer (seconds)
+- **Default**: `60`
+- **Description**: Cooldown period for an open circuit before allowing half-open probe requests
+- **Used by**: backend resilience logic
+- **Behavior**: During this period, calls to the failing backend are skipped when a fallback route exists
+
+### CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES
+- **Type**: Integer
+- **Default**: `1`
+- **Description**: Maximum number of probe requests allowed while a backend circuit is half-open
+- **Used by**: backend resilience logic
+- **Behavior**: Successful probes close the breaker; failed probes reopen it
+
 ### LOG_LEVEL
 - **Type**: String (enum)
 - **Default**: `INFO`
@@ -138,6 +159,9 @@ TEMP_FILE_TTL_MINUTES=360
 # Proxy settings (optional, defaults shown)
 PORT=5000
 WORKERS=2
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
+CIRCUIT_BREAKER_OPEN_SECONDS=60
+CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES=1
 LOG_LEVEL=INFO
 ```
 
@@ -161,6 +185,9 @@ services:
       TEMP_FILE_TTL_MINUTES: 360
       PORT: 5000
       WORKERS: 2
+      CIRCUIT_BREAKER_FAILURE_THRESHOLD: 5
+      CIRCUIT_BREAKER_OPEN_SECONDS: 60
+      CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES: 1
       LOG_LEVEL: INFO
     volumes:
       - tika-temp:/tmp/tika-proxy
@@ -231,6 +258,9 @@ TEMP_DIR=/tmp/tika-proxy
 TEMP_FILE_TTL_MINUTES=360
 PORT=5000
 WORKERS=2
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
+CIRCUIT_BREAKER_OPEN_SECONDS=60
+CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES=1
 LOG_LEVEL=DEBUG
 ```
 
@@ -245,6 +275,9 @@ TEMP_DIR=/var/lib/tika-proxy/temp
 TEMP_FILE_TTL_MINUTES=720
 PORT=5000
 WORKERS=2
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
+CIRCUIT_BREAKER_OPEN_SECONDS=60
+CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES=1
 LOG_LEVEL=WARN
 ```
 
@@ -259,5 +292,8 @@ TEMP_DIR=/tmp/tika-proxy
 TEMP_FILE_TTL_MINUTES=180
 PORT=5000
 WORKERS=2
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
+CIRCUIT_BREAKER_OPEN_SECONDS=60
+CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES=1
 LOG_LEVEL=INFO
 ```
