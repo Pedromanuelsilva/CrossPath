@@ -26,6 +26,29 @@ The proxy determines which backend(s) or extractor pipeline(s) to call based on 
 
 If the incoming request does not provide a reliable filename or extension signal, the proxy must default to Tika-first handling rather than guessing a Docling-preferred route.
 
+### Extension Signal Resolution
+For `PUT /meta` and `PUT /tika`, CrossPath should resolve the filename/extension signal in a deterministic order.
+
+Recommended initial order:
+1. `Content-Disposition` filename parameter, if present and parseable
+2. an explicitly configured trusted filename header if the deployment adds one upstream
+3. no filename signal
+
+Rules:
+- normalize the candidate filename to its basename before extracting the extension
+- treat the extension as case-insensitive and normalize it to lowercase
+- use only the final suffix for extension routing (for example, `report.final.PDF` resolves to `.pdf`)
+- do not infer a Docling-preferred extension from `Content-Type` alone
+- do not guess the extension from MIME detection before primary backend selection for `/meta` or `/tika`
+- if the filename signal is missing, malformed, empty, or not trusted, treat the request as having no reliable extension signal
+
+Examples:
+- `Content-Disposition: attachment; filename="Quarterly Report.PDF"` → `.pdf`
+- trusted upstream filename header with value `exports/table.CSV` → `.csv`
+- no filename metadata, or only `Content-Type: application/pdf` → no reliable extension signal, so route Tika-first
+
+The goal is to keep extension-based routing predictable and conservative. MIME detection and lightweight content inspection may still be used for document-specific routing, but they should not be used to fabricate a generic extension when the request did not provide one.
+
 ### Document-Specific Routing
 CrossPath must support routing for known document patterns where generic extraction is insufficient.
 
@@ -40,6 +63,8 @@ For these cases, CrossPath should:
 - fall back to the standard Docling or Tika path when no custom rule matches or when the custom extractor fails
 - preserve outward Tika-compatible behavior on `/meta` and `/tika`
 
+Document-specific routing is allowed to use richer signals than generic extension routing. In other words, CrossPath may use MIME hints or leading-byte inspection to match a known custom extractor rule, while still refusing to reinterpret that same information as a generic extension-based Docling preference.
+
 ### Rule Definition Model
 Document-specific routing rules should be defined in code.
 
@@ -47,6 +72,22 @@ The intended model is:
 - a lightweight document classification or detection function that inspects the file extension, filename, MIME hints, and selected content/header bytes
 - a code-defined registry or dictionary of matchers and routing targets
 - deterministic routing decisions based on the first matching rule or explicit rule priority
+
+### Backend Abstraction Model
+CrossPath should isolate parser/backend integration from endpoint handling so that adding a new parser does not require structural changes to the HTTP layer.
+
+The intended model is:
+- a small backend adapter interface implemented by every parser backend (for example: `extract_text`, `extract_metadata`, `detect_mime` when supported, `health_check`)
+- a backend registry keyed by stable backend names such as `docling`, `tika`, or future parsers
+- routing policies that refer only to backend names, not concrete client classes inside endpoint code
+- a fallback executor that accepts a resolved ordered backend plan and runs it without knowing parser-specific details
+
+With this structure:
+- adding a new parser means implementing one new adapter and registering it
+- changing a primary backend or fallback chain means editing routing policy data, not endpoint flow
+- endpoint handlers keep the same orchestration structure regardless of how many parsers exist
+
+CrossPath should avoid hardcoding `if backend == docling` style branching throughout the request path except where a backend-specific capability is genuinely unique.
 
 Example pattern:
 - if file type is PDF and the extracted header or leading content starts with `Relatorio de Contas`, use a custom processor
@@ -84,6 +125,18 @@ This should remain lightweight and request-scoped. CrossPath should not require 
 5. **One backend unavailable** (during /readyz): log and flag; other backend takes requests.
 6. **Both backends unavailable**: return an endpoint-compatible failure for extraction requests and an unhealthy status for readiness checks.
 
+Fallback chains should be represented as ordered backend lists or equivalent route policy objects rather than single-purpose conditional code. Even if the initial implementation only uses primary plus one fallback, the internal representation should support more than two backends so future parser additions do not require refactoring the routing structure.
+
+### Fallback Rationale
+The initial design intentionally prefers asymmetric fallback.
+
+Rationale:
+- Docling-preferred formats may fall back to Tika because Tika is the broader compatibility backend
+- Tika-primary and unknown formats do not automatically retry in Docling because the proxy should avoid speculative second-pass parsing on requests that were not explicitly routed to Docling
+- this keeps failure behavior easier to reason about and avoids doubling latency on classes of documents where Docling was not the planned parser
+
+If future testing shows that selected Tika-routed formats materially benefit from retrying in Docling, that should be introduced as an explicit route policy or configuration option rather than as an implicit global rule.
+
 ### Circuit Breaker Behavior
 CrossPath should implement an in-memory circuit breaker per backend and per process.
 
@@ -114,11 +167,24 @@ Scope:
 | 200  | OK                    | Successful extraction with content in response body                                          |
 | 204  | No Content            | Valid document processed but no extractable content (e.g., blank/image-only PDF without OCR) |
 | 400  | Bad Request           | Missing/invalid request headers (e.g., no Content-Type)                                      |
+| 413  | Payload Too Large     | Request body exceeds configured maximum size                                                 |
 | 422  | Unprocessable Entity  | Document format not supported, encrypted, or rejected by backend                             |
 | 500  | Internal Server Error | Proxy bug (not backend unavailability)                                                       |
 
 ### Error Response Format
 Use plain text error responses and Tika-like status handling. Do not introduce a custom JSON error envelope on Tika-compatible endpoints.
+
+Error responses should:
+- use `Content-Type: text/plain`
+- include `X-Request-ID`
+- return a short human-readable message only
+- avoid stack traces or structured JSON in the response body
+
+Example messages:
+- `400`: `Missing Content-Type header`
+- `413`: `Request body exceeds maximum size`
+- `422`: `Unsupported document format`
+- `500`: `Backend service unavailable`
 
 ---
 
@@ -126,11 +192,20 @@ Use plain text error responses and Tika-like status handling. Do not introduce a
 
 ### Thresholds & Configuration
 - **Memory Buffer Limit**: 50 MB (configurable via `BUFFER_THRESHOLD_BYTES`)
+- **Maximum Request Size**: Configurable via `MAX_REQUEST_SIZE_BYTES`
 - **Temp Directory**: Configurable via `TEMP_DIR` (default: `/tmp/tika-proxy`)
 - **Cleanup Strategy**:
-  1. On startup: delete all files in `TEMP_DIR` older than TTL
-  2. Per-request: after response is sent, mark temp file for deletion
-  3. Background: periodic cleanup of files exceeding TTL (configurable: `TEMP_FILE_TTL_MINUTES`, default 360 = 6 hours)
+  1. Required: on startup, delete all files in `TEMP_DIR` older than TTL
+  2. Required: per-request, delete or schedule deletion of the temp file after the response is sent
+  3. Optional: background periodic cleanup of files exceeding TTL (configurable: `TEMP_FILE_TTL_MINUTES`, default 360 = 6 hours)
+
+For the initial implementation, startup cleanup and request-scoped cleanup are mandatory. A periodic background sweeper is explicitly optional and may be deferred without changing the buffering architecture.
+
+Oversized request handling:
+- enforce `MAX_REQUEST_SIZE_BYTES` before full buffering when `Content-Length` is available
+- if the request exceeds the configured maximum size, return `413 Payload Too Large`
+- if `Content-Length` is absent or untrusted, stop buffering and reject once the streamed body crosses the configured limit
+- log rejections with request ID and observed size when available
 
 ### Buffering Flow
 1. Read request body into memory
@@ -155,6 +230,26 @@ Use plain text error responses and Tika-like status handling. Do not introduce a
 - When the caller requests JSON via `Accept: application/json`, Tika backend responses are passed through in their native JSON format
 - Docling responses must be transformed to the same metadata structure expected from Tika so ManifoldCF sees a Tika-compatible response regardless of backend used
 - Proxy-added trace fields must not change the response shape in a way that breaks Tika compatibility; if added, they should follow Tika-compatible conventions or be omitted from the response body and logged/returned via headers instead
+
+Initial mapping guidance:
+- preserve Tika-native fields as-is when the Tika backend produced them
+- for Docling-derived metadata, emit a flat Tika-compatible key/value structure rather than a Docling-native nested schema
+- include only fields that can be mapped confidently in the first release
+- when a Docling field has no safe Tika-compatible equivalent, omit it from the response body and prefer logging over inventing new response fields
+
+Minimum first-release mapping table:
+
+| Docling concept | Tika-compatible field |
+| --------------- | --------------------- |
+| filename        | `resourceName`        |
+| content type / mime type | `Content-Type` |
+| title           | `dc:title`            |
+| author / authors | `dc:creator`         |
+| language        | `dc:language`         |
+| created / creation date | `dcterms:created` |
+| modified date   | `dcterms:modified`    |
+
+If Docling returns multiple authors, normalize them into the Tika-compatible representation chosen by implementation and document that exact encoding before release.
 
 ### Response Format
 Return in a Tika-compatible format for the requested endpoint and negotiated response type
@@ -212,10 +307,12 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 | `TIKA_SERVICE_URL`           | string | (required)                            | HTTP endpoint of Tika Server (e.g., `http://tika:9998`)         |
 | `TIKA_SERVICE_TIMEOUT_MS`    | int    | 30000                                 | Request timeout for Tika in milliseconds                        |
 | `BUFFER_THRESHOLD_BYTES`     | int    | 52428800                              | Threshold for spooling to temp file (50 MB default)             |
+| `MAX_REQUEST_SIZE_BYTES`     | int    | 524288000                             | Maximum accepted request body size before returning `413`       |
+| `MAX_DOCLING_FILE_SIZE_BYTES` | int   | 104857600                             | Maximum file size eligible for Docling routing                  |
 | `TEMP_DIR`                   | string | `/tmp/tika-proxy`                     | Directory for temporary files                                   |
 | `TEMP_FILE_TTL_MINUTES`      | int    | 360                                   | Cleanup TTL for temp files in minutes (6 hours default)         |
 | `PORT`                       | int    | 5000                                  | Listen port for proxy                                           |
-| `WORKERS`                    | int    | conservative deployment-defined value | Worker process count for Uvicorn or Gunicorn/Uvicorn deployment |
+| `WORKERS`                    | int    | 2                                     | Worker process count for Uvicorn or Gunicorn/Uvicorn deployment |
 | `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | int | 5 | Consecutive backend failures before opening the circuit |
 | `CIRCUIT_BREAKER_OPEN_SECONDS` | int | 60 | Cooldown window before retrying a failed backend |
 | `CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES` | int | 1 | Maximum probe requests allowed while half-open |

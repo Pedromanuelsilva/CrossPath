@@ -43,6 +43,10 @@ These must be set or the proxy will not start.
 - **Used by**: Tika client to enforce timeout on requests
 - **Behavior**: If Tika does not respond within this time, request is aborted and mapped to Tika-compatible failure behavior (or fallback to secondary if applicable)
 - **Example**: `TIKA_SERVICE_TIMEOUT_MS=60000` (60 seconds)
+- **OCR Note**:
+  - `30000` is suitable only for non-OCR or light-OCR workloads
+  - If the deployed Tika image performs OCR on scanned PDFs or images, use a substantially higher timeout
+  - A practical starting point for OCR-heavy deployments is `120000`
 
 ### BUFFER_THRESHOLD_BYTES
 - **Type**: Integer (bytes)
@@ -55,6 +59,30 @@ These must be set or the proxy will not start.
 - **Tuning**: 
   - Increase for low-latency, high-memory systems
   - Decrease to reduce memory usage on memory-constrained systems
+
+### MAX_REQUEST_SIZE_BYTES
+- **Type**: Integer (bytes)
+- **Default**: `524288000` (500 MB)
+- **Range**: 1048576–21474836480 (1 MB to 20 GB)
+- **Description**: Maximum accepted request body size before the proxy rejects the request
+- **Used by**: Request validation and buffering guardrails
+- **Behavior**:
+  - If `Content-Length` exceeds this value, reject early with `413`
+  - If a streamed body grows beyond this value, stop buffering and return `413`
+  - This is an absolute safety limit and is separate from the in-memory spill threshold
+- **Example**: `MAX_REQUEST_SIZE_BYTES=1073741824` (1 GB)
+
+### MAX_DOCLING_FILE_SIZE_BYTES
+- **Type**: Integer (bytes)
+- **Default**: `104857600` (100 MB)
+- **Range**: 1048576–21474836480 (1 MB to 20 GB)
+- **Description**: Maximum file size eligible for Docling routing when Docling upload requires Base64-wrapped request bodies
+- **Used by**: Routing policy for Docling-preferred formats
+- **Behavior**:
+  - Files above this threshold should skip Docling and route directly to Tika
+  - This limit is separate from `MAX_REQUEST_SIZE_BYTES`
+  - The purpose is to bound Base64 expansion, memory pressure, and Docling request latency
+- **Example**: `MAX_DOCLING_FILE_SIZE_BYTES=157286400` (150 MB)
 
 ### TEMP_DIR
 - **Type**: String (filesystem path)
@@ -77,9 +105,10 @@ These must be set or the proxy will not start.
 - **Description**: Time-to-live for temporary files; files older than this are automatically cleaned up
 - **Used by**: Temp file manager cleanup process
 - **Behavior**:
-  - On startup: scan `TEMP_DIR` and delete files with modification time > TTL
-  - Per-request: after response is sent, temp file is eligible for cleanup
-  - Background (optional): periodic scan every 10 minutes deletes expired files
+  - Required: on startup, scan `TEMP_DIR` and delete files with modification time > TTL
+  - Required: per-request, after response is sent, temp file is eligible for cleanup
+  - Optional: periodic background scan every 10 minutes deletes expired files
+  - Initial release requirement: startup cleanup and per-request cleanup are sufficient; the periodic sweeper may be added later
 - **Example**: `TEMP_FILE_TTL_MINUTES=120` (2 hours)
 - **Tuning**: 
   - Increase if you want longer retention for debugging
@@ -97,10 +126,14 @@ These must be set or the proxy will not start.
 
 ### WORKERS
 - **Type**: Integer (process count)
-- **Default**: conservative deployment-defined value
+- **Default**: `2`
 - **Description**: Number of FastAPI worker processes for Uvicorn or Gunicorn/Uvicorn deployment
 - **Used by**: container startup command / process manager
-- **Behavior**: Should be set conservatively because document parsing is expensive and Docling/Tika may be the actual bottleneck
+- **Behavior**:
+  - Start with `2` workers for most deployments
+  - A practical heuristic is `min(CPU cores / 2, 4)`, rounded down but never less than 1
+  - Prefer scaling Docling and Tika capacity before increasing proxy workers aggressively
+  - Do not assume that matching CPU count is optimal; backend latency is usually the bottleneck
 - **Example**: `WORKERS=2`
 
 ### CIRCUIT_BREAKER_FAILURE_THRESHOLD
@@ -153,6 +186,8 @@ TIKA_SERVICE_TIMEOUT_MS=30000
 
 # Buffering (optional, defaults shown)
 BUFFER_THRESHOLD_BYTES=52428800
+MAX_REQUEST_SIZE_BYTES=524288000
+MAX_DOCLING_FILE_SIZE_BYTES=104857600
 TEMP_DIR=/tmp/tika-proxy
 TEMP_FILE_TTL_MINUTES=360
 
@@ -181,6 +216,8 @@ services:
       DOCLING_SERVICE_TIMEOUT_MS: 30000
       TIKA_SERVICE_TIMEOUT_MS: 30000
       BUFFER_THRESHOLD_BYTES: 52428800
+      MAX_REQUEST_SIZE_BYTES: 524288000
+      MAX_DOCLING_FILE_SIZE_BYTES: 104857600
       TEMP_DIR: /tmp/tika-proxy
       TEMP_FILE_TTL_MINUTES: 360
       PORT: 5000
@@ -230,6 +267,8 @@ The proxy will validate configuration on startup:
 | Invalid `PORT` | `PORT must be integer between 1024-65535` | Set valid port number |
 | Invalid `TEMP_DIR` | `TEMP_DIR does not exist or not writable` | Create directory and set appropriate permissions |
 | Invalid `BUFFER_THRESHOLD_BYTES` | `BUFFER_THRESHOLD_BYTES must be > 0` | Set to valid number of bytes |
+| Invalid `MAX_REQUEST_SIZE_BYTES` | `MAX_REQUEST_SIZE_BYTES must be > 0` | Set to valid number of bytes |
+| Invalid `MAX_DOCLING_FILE_SIZE_BYTES` | `MAX_DOCLING_FILE_SIZE_BYTES must be > 0` | Set to valid number of bytes |
 
 ---
 
@@ -254,6 +293,8 @@ TIKA_SERVICE_URL=http://tika:9998
 DOCLING_SERVICE_TIMEOUT_MS=30000
 TIKA_SERVICE_TIMEOUT_MS=30000
 BUFFER_THRESHOLD_BYTES=52428800
+MAX_REQUEST_SIZE_BYTES=524288000
+MAX_DOCLING_FILE_SIZE_BYTES=104857600
 TEMP_DIR=/tmp/tika-proxy
 TEMP_FILE_TTL_MINUTES=360
 PORT=5000
@@ -271,6 +312,8 @@ TIKA_SERVICE_URL=http://tika.internal:9998
 DOCLING_SERVICE_TIMEOUT_MS=120000
 TIKA_SERVICE_TIMEOUT_MS=120000
 BUFFER_THRESHOLD_BYTES=104857600
+MAX_REQUEST_SIZE_BYTES=524288000
+MAX_DOCLING_FILE_SIZE_BYTES=104857600
 TEMP_DIR=/var/lib/tika-proxy/temp
 TEMP_FILE_TTL_MINUTES=720
 PORT=5000
@@ -288,6 +331,8 @@ TIKA_SERVICE_URL=http://tika:9998
 DOCLING_SERVICE_TIMEOUT_MS=60000
 TIKA_SERVICE_TIMEOUT_MS=60000
 BUFFER_THRESHOLD_BYTES=10485760
+MAX_REQUEST_SIZE_BYTES=268435456
+MAX_DOCLING_FILE_SIZE_BYTES=52428800
 TEMP_DIR=/tmp/tika-proxy
 TEMP_FILE_TTL_MINUTES=180
 PORT=5000

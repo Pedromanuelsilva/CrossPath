@@ -54,5 +54,7 @@ Current direction:
 - framework: FastAPI
 - deployment: containerized
 - extractors: Docling Serve and Apache Tika as external services
+- parser backends should plug into a stable adapter/registry layer so new parsers can be added without changing endpoint structure
+- backend preference and fallback should live in routing policy definitions, not in HTTP handlers
 
 Document-specific handling is a core planned capability. CrossPath should support known file patterns such as specific PDFs, spreadsheets, and structured exports, route them to custom extractors or normalization logic, and still return plain text and metadata in a Tika-compatible way for ManifoldCF.

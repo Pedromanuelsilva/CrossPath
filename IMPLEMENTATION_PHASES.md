@@ -15,9 +15,10 @@ This document breaks down the implementation into executable phases for developm
    - `docker/` — Dockerfile and docker-compose.yml
    - `docs/` — additional documentation
 2. Setup configuration management
-   - Read environment variables (see TECHNICAL_SPEC.md, Configuration section)
-   - Validate required variables (DOCLING_SERVICE_URL, TIKA_SERVICE_URL)
-   - Provide sensible defaults for optional variables
+    - Read environment variables (see TECHNICAL_SPEC.md, Configuration section)
+    - Validate required variables (DOCLING_SERVICE_URL, TIKA_SERVICE_URL)
+    - Provide sensible defaults for optional variables
+    - Validate request-size and Docling-size routing limits
 3. Create logging framework
    - Structured JSON logging
    - Request ID (UUID v4) injected into all logs
@@ -103,6 +104,8 @@ This document breaks down the implementation into executable phases for developm
 
 **Tasks**:
 1. Create buffer manager
+   - Enforce `MAX_REQUEST_SIZE_BYTES` during request intake
+   - Reject oversized requests with `413 Payload Too Large`
    - Read request body into memory (up to BUFFER_THRESHOLD_BYTES)
    - If exceeds threshold, spill to temp file
    - Keep track of buffered data location (memory or file path)
@@ -115,9 +118,10 @@ This document breaks down the implementation into executable phases for developm
    - For memory: in-place
    - For files: re-open and seek
 4. Implement temp file cleanup
-   - On startup: scan TEMP_DIR and delete files older than TTL
-   - Per-request: delete temp file after response sent
-   - Background task (optional): periodic scan of TEMP_DIR every 10 min, delete expired files
+   - Required: on startup, scan TEMP_DIR and delete files older than TTL
+   - Required: per-request, delete temp file after response sent
+   - Optional: periodic background scan of TEMP_DIR every 10 min to delete expired files
+   - Treat the background sweeper as deferred work, not a prerequisite for the first functional release
 5. Add metrics
    - Track buffer spill events
    - Track temp file cleanup
@@ -125,6 +129,7 @@ This document breaks down the implementation into executable phases for developm
 **Dependencies**: Phase 1
 
 **Verification**:
+- Oversized requests are rejected with `413`
 - Small files (< 50MB) stay in memory
 - Large files (> 50MB) spill to disk
 - Same buffer can be read multiple times
@@ -138,14 +143,23 @@ This document breaks down the implementation into executable phases for developm
 **Goal**: Create clients for calling Docling and Tika services
 
 **Tasks**:
-1. Create Docling client
+1. Create backend adapter contract
+   - Define a shared interface/base protocol for parser backends
+   - Keep endpoint wiring dependent on the contract, not concrete clients
+   - Standardize normalized success and error result objects across backends
+2. Create backend registry
+   - Register backend adapters by stable backend name
+   - Keep backend lookup in one place so adding a parser is registration work, not endpoint surgery
+   - Allow routing and fallback policies to reference backends only by name
+3. Create Docling client
    - Use HTTP `POST` to the official Docling Serve conversion endpoint, starting from `/v1/convert/source`
    - Wrap incoming file bytes into Docling's JSON request model rather than forwarding raw bytes directly
    - Use a file source payload that includes the filename and Base64-encoded content
+   - Keep Base64 wrapping isolated inside the Docling adapter/client layer
    - Expect JSON response with extracted text and metadata
    - Handle timeout (DOCLING_SERVICE_TIMEOUT_MS)
    - Return normalized response object
-2. Create Tika client
+4. Create Tika client
    - HTTP PUT requests to Tika `/meta` and `/tika` endpoints
    - Pass file content
    - Request JSON from Tika `/meta` via `Accept: application/json`
@@ -153,10 +167,10 @@ This document breaks down the implementation into executable phases for developm
    - Parse plain text response from Tika `/tika`
    - Handle timeout (TIKA_SERVICE_TIMEOUT_MS)
    - Return normalized response object
-3. Create detection client (Tika only for now)
+5. Create detection client (Tika only for now)
    - Call Tika `/detect/stream` endpoint
    - Return MIME type as string
-4. Health check helper
+6. Health check helper
    - Lightweight call to verify backend is alive
    - Used by `/readyz` endpoint
 
@@ -177,14 +191,21 @@ This document breaks down the implementation into executable phases for developm
 
 **Tasks**:
 1. Create extension parser
-   - Extract file extension from the inbound request context when a reliable filename or equivalent signal is available
+   - Resolve filename signal in a deterministic order
+   - Initial order: `Content-Disposition` filename, then configured trusted upstream filename header, then none
+   - Extract file extension from the resolved filename only when that signal is reliable
    - Normalize to lowercase (e.g., ".PDF" → ".pdf")
+   - Use basename plus final suffix only
+   - Do not infer Docling-preferred extensions from `Content-Type` alone
+   - Do not fabricate an extension from MIME detection before backend selection for `/meta` or `/tika`
    - If no reliable extension signal is available, default routing to Tika-first behavior
 2. Create routing function
-   - Map extension to primary backend and optional fallback backend (see TECHNICAL_SPEC.md, Routing Logic table)
-   - Return (primary, fallback) tuple
+   - Map extension to an ordered backend plan or route policy object (see TECHNICAL_SPEC.md, Routing Logic table)
+   - Initial implementation may resolve to primary plus optional fallback, but the structure should support longer fallback chains
    - For Docling-preferred formats, fallback is Tika
    - For Tika-only formats, fallback is none
+   - Route files larger than `MAX_DOCLING_FILE_SIZE_BYTES` away from Docling and directly to Tika
+   - Keep route definitions in a central routing table/registry so backend preference changes do not affect endpoint code
 3. Define extension point for document-specific routing
    - Allow known document patterns to override extension-only routing
    - Support matching by filename pattern, metadata hints, MIME type, and lightweight content inspection
@@ -198,6 +219,9 @@ This document breaks down the implementation into executable phases for developm
 
 **Verification**:
 - Extensions map to correct backends
+- Filename resolution order is deterministic and tested
+- `Content-Disposition` filename is parsed correctly
+- Missing or malformed filename metadata defaults to Tika-first behavior
 - Docling-preferred formats are identified
 - Tika-only formats are identified
 - Unknown extensions default to Tika-only
@@ -217,6 +241,8 @@ This document breaks down the implementation into executable phases for developm
    - Ensure `/meta` preserves Apache Tika-compatible metadata response semantics, including negotiated JSON output
    - Pass Tika `/meta` responses through without schema changes for the negotiated representation
    - Transform Docling metadata into the same format expected from Tika
+   - Implement the first-release mapping table defined in TECHNICAL_SPEC.md
+   - Omit Docling fields that do not yet have a safe Tika-compatible mapping
    - Keep proxy trace data in headers and logs unless a field can be added without breaking Tika compatibility
 3. Create response formatters
    - Format `/meta` response in a Tika-compatible negotiated representation
@@ -233,6 +259,7 @@ This document breaks down the implementation into executable phases for developm
 **Verification**:
 - Text is normalized (line endings, UTF-8)
 - Metadata is returned in a Tika-compatible negotiated representation without introducing incompatible proxy-specific body fields
+- First-release Docling metadata fields map to the documented Tika-compatible keys
 - Status codes match expected behavior
 
 ---
@@ -243,8 +270,9 @@ This document breaks down the implementation into executable phases for developm
 
 **Tasks**:
 1. Create fallback handler
+   - Execute the ordered backend plan returned by routing
    - If Docling is primary and it fails or does not support the file, call Tika
-   - If Tika is primary, do not fall back to Docling
+   - If Tika is primary, do not fall back to Docling unless a route explicitly says otherwise
    - Log fallback events with backend names and reason
    - Increment fallback metrics
    - Return error response if backend failure occurs with no secondary available
