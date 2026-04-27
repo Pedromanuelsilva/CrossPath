@@ -12,6 +12,7 @@ This document provides detailed technical requirements for implementing CrossPat
 - **Connector**: "External Tika server" connector (see Apache ManifoldCF official docs)
 - **API Contract**: `PUT /meta`, `PUT /tika`, `PUT /detect/stream`
 - **Expected Behavior**: Expects Tika-compatible behavior on `PUT /meta`, `PUT /tika`, and `PUT /detect/stream`; content negotiation and status codes should follow Apache Tika Server behavior as closely as practical
+- **Default Connector Request Signals**: The stock ManifoldCF `tikaservice` connector may send `Content-Type` when `RepositoryDocument.getMimeType()` is available. It does not send a filename header by default. Filename-based routing must therefore be treated as an optional enhancement for deployments that add `Content-Disposition` or a configured trusted filename header.
 
 ### Backend Services
 - **Docling**: onprem container (docling-serve) — HTTP endpoint, no authentication
@@ -22,32 +23,38 @@ This document provides detailed technical requirements for implementing CrossPat
 ## Routing Logic
 
 ### Request Type Determination
-The proxy determines which backend(s) or extractor pipeline(s) to call based on request path, file extension, and document-specific routing rules.
+The proxy determines which backend(s) or extractor pipeline(s) to call based on request path, MIME type, file extension, and document-specific routing rules.
 
-If the incoming request does not provide a reliable filename or extension signal, the proxy must default to Tika-first handling rather than guessing a Docling-preferred route.
+For stock ManifoldCF `tikaservice` compatibility, generic route selection must prefer a reliable inbound `Content-Type` header when present. If no usable MIME type is present, CrossPath should use a reliable filename/extension signal when available. If neither signal is available, the proxy must default to Tika-first handling rather than guessing a Docling-preferred route.
 
-### Extension Signal Resolution
-For `PUT /meta` and `PUT /tika`, CrossPath should resolve the filename/extension signal in a deterministic order.
+### Generic Routing Signal Resolution
+For `PUT /meta` and `PUT /tika`, CrossPath should resolve generic routing signals in a deterministic order.
 
 Recommended initial order:
-1. `Content-Disposition` filename parameter, if present and parseable
-2. an explicitly configured trusted filename header if the deployment adds one upstream
-3. no filename signal
+1. `Content-Type` header, if present and mapped to a known route
+2. `Content-Disposition` filename parameter, if present and parseable
+3. an explicitly configured trusted filename header if the deployment adds one upstream
+4. no generic routing signal
 
 Rules:
+- treat `Content-Type` as the default stock-ManifoldCF-compatible routing signal
+- normalize MIME type by lowercasing and ignoring parameters such as `charset`
+- do not reject otherwise valid extraction requests only because `Content-Type` is missing
 - normalize the candidate filename to its basename before extracting the extension
 - treat the extension as case-insensitive and normalize it to lowercase
 - use only the final suffix for extension routing (for example, `report.final.PDF` resolves to `.pdf`)
-- do not infer a Docling-preferred extension from `Content-Type` alone
+- do not fabricate a filename or extension from `Content-Type`
 - do not guess the extension from MIME detection before primary backend selection for `/meta` or `/tika`
-- if the filename signal is missing, malformed, empty, or not trusted, treat the request as having no reliable extension signal
+- if MIME type is missing or unrecognized and filename signal is missing, malformed, empty, or not trusted, treat the request as having no reliable generic routing signal
 
 Examples:
+- `Content-Type: application/pdf` → PDF route
+- `Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document` → DOCX route
 - `Content-Disposition: attachment; filename="Quarterly Report.PDF"` → `.pdf`
 - trusted upstream filename header with value `exports/table.CSV` → `.csv`
-- no filename metadata, or only `Content-Type: application/pdf` → no reliable extension signal, so route Tika-first
+- no `Content-Type`, no filename metadata → no reliable generic routing signal, so route Tika-first
 
-The goal is to keep extension-based routing predictable and conservative. MIME detection and lightweight content inspection may still be used for document-specific routing, but they should not be used to fabricate a generic extension when the request did not provide one.
+The goal is to keep generic routing predictable and compatible with the default ManifoldCF external Tika Server connector. MIME detection and lightweight content inspection may still be used for document-specific routing, but they should not be used to fabricate a generic filename or extension when the request did not provide one.
 
 ### Document-Specific Routing
 CrossPath must support routing for known document patterns where generic extraction is insufficient.
@@ -60,16 +67,16 @@ Examples include:
 For these cases, CrossPath should:
 - detect the document pattern using filename rules, metadata hints, MIME type, and/or lightweight content inspection
 - route the document to a custom extractor or normalization pipeline when a matching rule is found
-- fall back to the standard Docling or Tika path when no custom rule matches or when the custom extractor fails
+- fall back to the standard MIME/extension-based Docling or Tika path when no custom rule matches or when the custom extractor fails
 - preserve outward Tika-compatible behavior on `/meta` and `/tika`
 
-Document-specific routing is allowed to use richer signals than generic extension routing. In other words, CrossPath may use MIME hints or leading-byte inspection to match a known custom extractor rule, while still refusing to reinterpret that same information as a generic extension-based Docling preference.
+Document-specific routing is allowed to use richer signals than generic routing. In other words, CrossPath may use filename patterns, MIME hints, or leading-byte inspection to match a known custom extractor rule, while still refusing to invent a generic filename or extension when the request did not provide one.
 
 ### Rule Definition Model
 Document-specific routing rules should be defined in code.
 
 The intended model is:
-- a lightweight document classification or detection function that inspects the file extension, filename, MIME hints, and selected content/header bytes
+- a lightweight document classification or detection function that inspects the MIME type, file extension, filename, and selected content/header bytes
 - a code-defined registry or dictionary of matchers and routing targets
 - deterministic routing decisions based on the first matching rule or explicit rule priority
 
@@ -100,22 +107,21 @@ This should remain lightweight and request-scoped. CrossPath should not require 
 
 **For `PUT /meta` and `PUT /tika`:**
 
-| Extension    | Primary | Fallback |
-| ------------ | ------- | -------- |
-| `.pdf`       | Docling | Tika     |
-| `.docx`      | Docling | Tika     |
-| `.pptx`      | Docling | Tika     |
-| `.xlsx`      | Docling | Tika     |
-| `.csv`       | Docling | Tika     |
-| `.md`        | Docling | Tika     |
-| `.html`      | Docling | Tika     |
-| `.xhtml`     | Docling | Tika     |
-| `.doc`       | Tika    | none     |
-| `.ppt`       | Tika    | none     |
-| `.xls`       | Tika    | none     |
-| `.rtf`       | Tika    | none     |
-| `.msg`       | Tika    | none     |
-| (all others) | Tika    | none     |
+| Signal | Primary | Fallback |
+| ------ | ------- | -------- |
+| MIME `application/pdf` or extension `.pdf` | Docling | Tika |
+| MIME `application/vnd.openxmlformats-officedocument.wordprocessingml.document` or extension `.docx` | Docling | Tika |
+| MIME `application/vnd.openxmlformats-officedocument.presentationml.presentation` or extension `.pptx` | Docling | Tika |
+| MIME `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` or extension `.xlsx` | Docling | Tika |
+| MIME `text/csv`, `application/csv`, or extension `.csv` | Docling | Tika |
+| MIME `text/markdown`, `text/x-markdown`, or extension `.md` | Docling | Tika |
+| MIME `text/html`, `application/xhtml+xml`, or extensions `.html`, `.xhtml` | Docling | Tika |
+| MIME `application/msword` or extension `.doc` | Tika | none |
+| MIME `application/vnd.ms-powerpoint` or extension `.ppt` | Tika | none |
+| MIME `application/vnd.ms-excel` or extension `.xls` | Tika | none |
+| MIME `application/rtf`, `text/rtf`, or extension `.rtf` | Tika | none |
+| MIME `application/vnd.ms-outlook` or extension `.msg` | Tika | none |
+| all other or missing signals | Tika | none |
 
 ### Fallback Behavior
 1. **Docling primary formats**: if Docling does not support the file or fails, route to Tika.
@@ -166,7 +172,7 @@ Scope:
 | ---- | --------------------- | -------------------------------------------------------------------------------------------- |
 | 200  | OK                    | Successful extraction with content in response body                                          |
 | 204  | No Content            | Valid document processed but no extractable content (e.g., blank/image-only PDF without OCR) |
-| 400  | Bad Request           | Missing/invalid request headers (e.g., no Content-Type)                                      |
+| 400  | Bad Request           | Invalid request syntax or invalid required endpoint semantics                                 |
 | 413  | Payload Too Large     | Request body exceeds configured maximum size                                                 |
 | 422  | Unprocessable Entity  | Document format not supported, encrypted, or rejected by backend                             |
 | 500  | Internal Server Error | Proxy bug (not backend unavailability)                                                       |
@@ -181,7 +187,7 @@ Error responses should:
 - avoid stack traces or structured JSON in the response body
 
 Example messages:
-- `400`: `Missing Content-Type header`
+- `400`: `Invalid request`
 - `413`: `Request body exceeds maximum size`
 - `422`: `Unsupported document format`
 - `500`: `Backend service unavailable`
@@ -366,7 +372,7 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 ## Testing Strategy
 
 ### Unit Tests
-- Routing logic (extension → backend selection)
+- Routing logic (MIME type / extension → backend selection)
 - Normalization (line endings, UTF-8, JSON structure)
 - Status code mapping (input errors → correct HTTP status)
 - Buffering (in-memory vs. temp file, cleanup)

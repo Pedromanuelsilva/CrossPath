@@ -12,6 +12,8 @@ The proxy must expose the HTTP contract expected by ManifoldCF’s remote Tika s
 
 ManifoldCF’s `tikaservice` connector calls those endpoints and expects Tika-compatible behavior, with `/meta` available as JSON when requested and `/tika` available as plain text by default.
 
+CrossPath must work with the stock ManifoldCF external Tika Server connector. That connector may provide `Content-Type` when ManifoldCF has a MIME type for the document, but it does not provide a filename header by default. CrossPath routing must therefore use MIME type first when present, then use filename/extension only when a deployment supplies a reliable filename signal such as `Content-Disposition` or a configured trusted filename header.
+
 The proxy will internally route documents to:
 
 - **Docling Serve** for preferred formats
@@ -67,9 +69,12 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 
 ### Routing
 - [ ] `/detect/stream` uses Tika detection by default
-- [ ] `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.md`, `.html`, `.xhtml` try Docling first
-- [ ] legacy formats like `.doc`, `.ppt`, `.xls`, `.rtf`, `.msg` use Tika first
-- [ ] known document patterns can override extension-only routing and select custom extractors
+- [ ] generic routing prefers reliable inbound `Content-Type` because this is the signal provided by the stock ManifoldCF `tikaservice` connector
+- [ ] if `Content-Type` is missing or unrecognized, generic routing falls back to a reliable filename/extension signal when available
+- [ ] missing `Content-Type` alone does not cause request rejection
+- [ ] PDF, OOXML, CSV, Markdown, HTML, and XHTML MIME types or extensions try Docling first
+- [ ] legacy formats like DOC, PPT, XLS, RTF, and MSG MIME types or extensions use Tika first
+- [ ] known document patterns can override generic MIME/extension routing and select custom extractors
 - [ ] document-specific rules are defined in code via matchers/handlers rather than an external rule store
 - [ ] a lightweight detection function can classify the file before final route selection
 - [ ] if Docling does not support a file or fails for a preferred format, fallback to Tika
@@ -139,7 +144,7 @@ This service is **not** responsible for crawling, ACL enforcement, or indexing i
 - Deployment target: Docker container
 - Backend connectivity: internal network access to Docling Serve and Tika Server
 - Concurrency model: use multiple worker processes, but keep worker counts conservative because document parsing is expensive and the external backends are likely to be the throughput bottleneck
-- Routing input rule: use filename/extension when reliably available from the inbound request context; otherwise default to Tika-first handling
+- Routing input rule: use inbound MIME type first when it maps to a known route; if MIME type is missing or unrecognized, use filename/extension when reliably available from the inbound request context; otherwise default to Tika-first handling
 - Initial Docling integration target: `POST` to the official Docling Serve conversion endpoint, starting from `/v1/convert/source` and adapting only if deployment-specific versioning or routing requires a different base path
 - Core planned capability: support document-specific routing and custom extractors for known document structures while preserving Tika-compatible outward behavior
 - Rule definition model: implement document-specific routing in code through a classifier/matcher function and a registry or dictionary of routing decisions

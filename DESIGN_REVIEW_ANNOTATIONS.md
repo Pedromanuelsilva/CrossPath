@@ -27,23 +27,23 @@ Base64 encoding adds 33% overhead to file size. A 50MB PDF becomes 66MB+ JSON pa
 
 ---
 
-### 2. TECHNICAL_SPEC.md — Extension Detection (Line 24-27)
+### 2. TECHNICAL_SPEC.md — Routing Signal Detection (Line 24-50)
 
 **Current Text:**
 > Extract file extension from the inbound request context when a reliable filename or equivalent signal is available
 > If no reliable extension signal is available, default routing to Tika-first behavior
 
 **Issue:**
-Tika API endpoints (`PUT /meta`, `/tika`) accept raw bytes with no filename in URL path. ManifoldCF's header behavior is not documented.
+Tika API endpoints (`PUT /meta`, `/tika`) accept raw bytes with no filename in URL path. The stock ManifoldCF `tikaservice` external Tika Server connector may send `Content-Type` when `RepositoryDocument.getMimeType()` is available, but it does not send a filename header by default.
 
-**Recommended Annotation:**
+**Resolved Requirement:**
 ```
-🔍 RESEARCH REQUIRED: How does ManifoldCF pass filename to Tika endpoints?
-- Check ManifoldCF source code for tikaservice connector header usage
-- Possible headers: Content-Disposition, X-Filename, X-Resource-Name
-- Test: Deploy stock Tika, capture actual ManifoldCF request headers
-- Fallback: If no filename available, MIME detection + extension mapping
-- Document: Exact header parsing logic before Phase 5 implementation
+✅ RESOLVED: Route using MIME type first, then filename extension
+- Generic route selection first uses inbound Content-Type when it maps to a known route
+- If Content-Type is missing or unrecognized, route from Content-Disposition or a configured trusted filename header when available
+- If neither signal exists, default to Tika-first handling
+- Missing Content-Type alone must not reject a request
+- Do not fabricate a filename or extension from MIME detection
 ```
 
 ---
@@ -393,7 +393,7 @@ Do NOT include stack traces in production (log them instead).
 DO include request ID in response header for traceability.
 
 Example error messages:
-- 400: "Missing Content-Type header"
+- 400: "Invalid request"
 - 413: "Request body exceeds maximum size (500 MB)"
 - 422: "Unsupported document format: encrypted PDF"
 - 422: "Document rejected by backend: password protected"
@@ -460,7 +460,7 @@ Implementation:
 ## Recommended Action Plan
 
 **Before starting Phase 1:**
-1. Research ManifoldCF tikaservice connector source code (annotation #2)
+1. Confirm ManifoldCF tikaservice connector behavior in the target release if upgrading beyond 2.25 (annotation #2)
 2. Test Docling Serve API with large files (annotation #1)
 3. Create metadata field mapping table (annotation #4)
 

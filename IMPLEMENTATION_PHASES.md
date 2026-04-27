@@ -187,27 +187,30 @@ This document breaks down the implementation into executable phases for developm
 
 ## Phase 5: Routing Logic
 
-**Goal**: Implement backend selection based on file extension and document-specific routing rules
+**Goal**: Implement backend selection based on MIME type, file extension, and document-specific routing rules
 
 **Tasks**:
-1. Create extension parser
-   - Resolve filename signal in a deterministic order
-   - Initial order: `Content-Disposition` filename, then configured trusted upstream filename header, then none
-   - Extract file extension from the resolved filename only when that signal is reliable
+1. Create generic routing signal parser
+   - Resolve routing signals in a deterministic order
+   - Initial order: `Content-Type`, then `Content-Disposition` filename, then configured trusted upstream filename header, then none
+   - Normalize `Content-Type` by lowercasing and stripping parameters such as `charset`
+   - Treat `Content-Type` as the primary stock-ManifoldCF-compatible signal
+   - Do not reject otherwise valid extraction requests only because `Content-Type` is missing
+   - Extract file extension from the resolved filename only when MIME type is missing or unrecognized and the filename signal is reliable
    - Normalize to lowercase (e.g., ".PDF" → ".pdf")
    - Use basename plus final suffix only
-   - Do not infer Docling-preferred extensions from `Content-Type` alone
+   - Do not fabricate a filename or extension from `Content-Type`
    - Do not fabricate an extension from MIME detection before backend selection for `/meta` or `/tika`
-   - If no reliable extension signal is available, default routing to Tika-first behavior
+   - If neither a recognized MIME type nor reliable extension signal is available, default routing to Tika-first behavior
 2. Create routing function
-   - Map extension to an ordered backend plan or route policy object (see TECHNICAL_SPEC.md, Routing Logic table)
+   - Map MIME type or extension to an ordered backend plan or route policy object (see TECHNICAL_SPEC.md, Routing Logic table)
    - Initial implementation may resolve to primary plus optional fallback, but the structure should support longer fallback chains
    - For Docling-preferred formats, fallback is Tika
    - For Tika-only formats, fallback is none
    - Route files larger than `MAX_DOCLING_FILE_SIZE_BYTES` away from Docling and directly to Tika
    - Keep route definitions in a central routing table/registry so backend preference changes do not affect endpoint code
 3. Define extension point for document-specific routing
-   - Allow known document patterns to override extension-only routing
+   - Allow known document patterns to override generic MIME/extension routing
    - Support matching by filename pattern, metadata hints, MIME type, and lightweight content inspection
    - Implement a lightweight classifier/detection function for document-specific routing
    - Keep rules in code as matchers/handlers or a routing dictionary/registry
@@ -218,13 +221,15 @@ This document breaks down the implementation into executable phases for developm
 **Dependencies**: Phase 4
 
 **Verification**:
-- Extensions map to correct backends
-- Filename resolution order is deterministic and tested
+- MIME types map to correct backends
+- Extensions map to correct backends when MIME type is missing or unrecognized
+- Routing signal resolution order is deterministic and tested
 - `Content-Disposition` filename is parsed correctly
-- Missing or malformed filename metadata defaults to Tika-first behavior
+- Missing `Content-Type` alone does not reject a request
+- Missing or malformed filename metadata defaults to Tika-first behavior when MIME type is also missing or unrecognized
 - Docling-preferred formats are identified
 - Tika-only formats are identified
-- Unknown extensions default to Tika-only
+- Unknown MIME types and extensions default to Tika-only
 
 ---
 
@@ -313,7 +318,7 @@ This document breaks down the implementation into executable phases for developm
 **Tasks**:
 1. Wire `PUT /meta` endpoint
    - Buffer request body (Phase 3)
-   - Route based on extension (Phase 5)
+   - Route based on MIME type or extension (Phase 5)
    - Call primary backend via client (Phase 4)
    - On failure, fallback to secondary (Phase 7)
    - Normalize metadata response (Phase 6)
@@ -348,7 +353,7 @@ This document breaks down the implementation into executable phases for developm
 
 **Tasks**:
 1. Unit tests (no external services)
-   - Routing logic (extension → backend selection)
+   - Routing logic (MIME type / extension → backend selection)
    - Normalization (text, metadata, status codes)
    - Buffering (in-memory, spill, reuse)
    - Temp file cleanup (TTL, startup)
