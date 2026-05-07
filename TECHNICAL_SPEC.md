@@ -322,7 +322,7 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 | `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | int | 5 | Consecutive backend failures before opening the circuit |
 | `CIRCUIT_BREAKER_OPEN_SECONDS` | int | 60 | Cooldown window before retrying a failed backend |
 | `CIRCUIT_BREAKER_HALF_OPEN_MAX_PROBES` | int | 1 | Maximum probe requests allowed while half-open |
-| `LOG_LEVEL`                  | string | `INFO`                                | Log level (DEBUG, INFO, WARN, ERROR)                            |
+| `LOG_LEVEL`                  | string | `INFO`                                | Minimum log level/profile (`PRODUCTION`, `DEBUG`, `INFO`, `WARNING`/`WARN`, `ERROR`, `CRITICAL`) |
 
 ---
 
@@ -346,6 +346,15 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 ### Logs (structured JSON)
 - All logs: JSON format with fields: `timestamp`, `level`, `request_id`, `message`, `backend`, `duration_ms`, `status_code`
 - Examples: request received, backend called, fallback triggered, error occurred
+- Logging must support multiple configured levels/profiles:
+  - `PRODUCTION`: production-safe logging; equivalent to an `INFO` minimum, with debug payloads, stack traces, and sensitive request/response details suppressed
+  - `DEBUG`: verbose troubleshooting logs, including routing decisions, backend call details, fallback decisions, and sanitized request context
+  - `INFO`: normal lifecycle events, backend selections, successful fallbacks, startup/shutdown, and health state transitions
+  - `WARNING`/`WARN`: degraded but recoverable conditions, including backend unavailability with a usable fallback, circuit breaker transitions, cleanup failures, and near-limit resource usage
+  - `ERROR`: failed requests, exhausted fallback chains, backend errors with no usable alternative, and unexpected recoverable proxy errors
+  - `CRITICAL`: unrecoverable startup/configuration failures or conditions requiring process termination
+- `WARN` should be accepted as an alias for `WARNING`.
+- `PRODUCTION` should be accepted as a logging profile, not emitted as a log record severity; emitted log records should still use standard severities such as `INFO`, `WARNING`, `ERROR`, and `CRITICAL`.
 
 ---
 

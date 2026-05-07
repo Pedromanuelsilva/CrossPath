@@ -160,16 +160,18 @@ These must be set or the proxy will not start.
 ### LOG_LEVEL
 - **Type**: String (enum)
 - **Default**: `INFO`
-- **Valid Values**: `DEBUG`, `INFO`, `WARN`, `ERROR`
-- **Description**: Minimum log level to output
+- **Valid Values**: `PRODUCTION`, `DEBUG`, `INFO`, `WARNING`, `WARN`, `ERROR`, `CRITICAL`
+- **Description**: Minimum log level/profile to output
 - **Used by**: Logging framework
 - **Behavior**:
-  - `DEBUG`: All log messages, including request/response details, backend calls
-  - `INFO`: Normal operation logs, fallbacks, errors
-  - `WARN`: Warnings and errors only
-  - `ERROR`: Errors only (minimal logging)
+  - `PRODUCTION`: Production-safe logging profile; equivalent to an `INFO` minimum with debug payloads, stack traces, and sensitive request/response details suppressed
+  - `DEBUG`: Verbose troubleshooting logs, including routing decisions, backend call details, fallback decisions, and sanitized request context
+  - `INFO`: Normal lifecycle events, backend selections, successful fallbacks, startup/shutdown, and health state transitions
+  - `WARNING` / `WARN`: Warnings and errors only; `WARN` is accepted as an alias for `WARNING`
+  - `ERROR`: Errors only
+  - `CRITICAL`: Unrecoverable startup/configuration failures or conditions requiring process termination
 - **Example**: `LOG_LEVEL=DEBUG`
-- **Note**: Set to `DEBUG` in development/troubleshooting; use `INFO` or `WARN` in production
+- **Note**: Set to `DEBUG` in development/troubleshooting; use `PRODUCTION`, `INFO`, or `WARNING` in production. `PRODUCTION` is a configuration profile and should not be emitted as the log record severity.
 
 ---
 

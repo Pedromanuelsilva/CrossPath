@@ -22,7 +22,8 @@ This document breaks down the implementation into executable phases for developm
 3. Create logging framework
    - Structured JSON logging
    - Request ID (UUID v4) injected into all logs
-   - Log level configuration
+   - Multi-level log configuration for `PRODUCTION`, `DEBUG`, `INFO`, `WARNING`/`WARN`, `ERROR`, and `CRITICAL`
+   - Production-safe logging profile that suppresses debug payloads, stack traces, and sensitive request/response details
 4. Create Prometheus metrics framework
    - Register all required metrics (see TECHNICAL_SPEC.md, Observability)
    - Expose `/metrics` endpoint (standard Prometheus)
