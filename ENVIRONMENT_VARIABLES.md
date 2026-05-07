@@ -37,16 +37,15 @@ These must be set or the proxy will not start.
 
 ### TIKA_SERVICE_TIMEOUT_MS
 - **Type**: Integer (milliseconds)
-- **Default**: `30000` (30 seconds)
+- **Default**: `120000` (120 seconds)
 - **Range**: 1000–600000 (1 second to 10 minutes)
 - **Description**: HTTP request timeout when calling Tika Server
 - **Used by**: Tika client to enforce timeout on requests
 - **Behavior**: If Tika does not respond within this time, request is aborted and mapped to Tika-compatible failure behavior (or fallback to secondary if applicable)
-- **Example**: `TIKA_SERVICE_TIMEOUT_MS=60000` (60 seconds)
+- **Example**: `TIKA_SERVICE_TIMEOUT_MS=120000` (120 seconds)
 - **OCR Note**:
-  - `30000` is suitable only for non-OCR or light-OCR workloads
-  - If the deployed Tika image performs OCR on scanned PDFs or images, use a substantially higher timeout
-  - A practical starting point for OCR-heavy deployments is `120000`
+  - The default of `120000` is set to accommodate OCR workloads; scanned PDFs and multi-page image documents can take 60–120 seconds per document
+  - For deployments where Tika does not perform OCR, this may be reduced to `30000` (30 seconds)
 
 ### BUFFER_THRESHOLD_BYTES
 - **Type**: Integer (bytes)
@@ -184,7 +183,7 @@ TIKA_SERVICE_URL=http://tika:9998
 
 # Timeouts (optional, defaults shown)
 DOCLING_SERVICE_TIMEOUT_MS=30000
-TIKA_SERVICE_TIMEOUT_MS=30000
+TIKA_SERVICE_TIMEOUT_MS=120000
 
 # Buffering (optional, defaults shown)
 BUFFER_THRESHOLD_BYTES=52428800
@@ -216,7 +215,7 @@ services:
       DOCLING_SERVICE_URL: http://docling:5001
       TIKA_SERVICE_URL: http://tika:9998
       DOCLING_SERVICE_TIMEOUT_MS: 30000
-      TIKA_SERVICE_TIMEOUT_MS: 30000
+      TIKA_SERVICE_TIMEOUT_MS: 120000
       BUFFER_THRESHOLD_BYTES: 52428800
       MAX_REQUEST_SIZE_BYTES: 524288000
       MAX_DOCLING_FILE_SIZE_BYTES: 104857600
@@ -293,7 +292,7 @@ At startup, the proxy will:
 DOCLING_SERVICE_URL=http://docling:5001
 TIKA_SERVICE_URL=http://tika:9998
 DOCLING_SERVICE_TIMEOUT_MS=30000
-TIKA_SERVICE_TIMEOUT_MS=30000
+TIKA_SERVICE_TIMEOUT_MS=120000
 BUFFER_THRESHOLD_BYTES=52428800
 MAX_REQUEST_SIZE_BYTES=524288000
 MAX_DOCLING_FILE_SIZE_BYTES=104857600
@@ -331,7 +330,7 @@ LOG_LEVEL=WARN
 DOCLING_SERVICE_URL=http://docling:5001
 TIKA_SERVICE_URL=http://tika:9998
 DOCLING_SERVICE_TIMEOUT_MS=60000
-TIKA_SERVICE_TIMEOUT_MS=60000
+TIKA_SERVICE_TIMEOUT_MS=120000
 BUFFER_THRESHOLD_BYTES=10485760
 MAX_REQUEST_SIZE_BYTES=268435456
 MAX_DOCLING_FILE_SIZE_BYTES=52428800

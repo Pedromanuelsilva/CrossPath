@@ -50,22 +50,14 @@ Tika API endpoints (`PUT /meta`, `/tika`) accept raw bytes with no filename in U
 
 ### 3. TECHNICAL_SPEC.md — Fallback Asymmetry (Line 80-83)
 
-**Current Text:**
-> Docling primary formats: if Docling does not support the file or fails, route to Tika.
-> Tika primary formats and unknown formats: do not fall back to Docling.
+**Status: ✅ RESOLVED**
 
-**Issue:**
-If Tika times out on a `.pdf` (Docling-preferred format), no retry with Docling occurs even though Docling might succeed.
-
-**Recommended Annotation:**
-```
-⚠️ DESIGN DECISION: Document rationale for asymmetric fallback
-- Scenario: Tika timeout on complex PDF → 500 error (no Docling retry)
-- Question: Should Docling-preferred formats have symmetric fallback?
-- Tradeoff: Symmetric fallback = better reliability but 2x latency on failures
-- Recommendation: Add config flag ENABLE_SYMMETRIC_FALLBACK (default: false)
-- Document: Why asymmetry is intentional (if it is)
-```
+Rationale confirmed and documented in TECHNICAL_SPEC.md (Fallback Rationale section):
+- Docling supports a more limited set of file formats than Tika
+- Every format Docling supports is routed Docling-first with Tika as fallback
+- Formats outside Docling's supported set go directly to Tika — there is no value in attempting Docling for formats it cannot process
+- The fallback direction is always Docling → Tika, never Tika → Docling
+- If Docling adds support for new formats, those formats should be moved from Tika-only to Docling-first in the routing table
 
 ---
 
@@ -172,30 +164,9 @@ Add alert: Disk usage >80% of available space
 
 ### 8. TECHNICAL_SPEC.md — Timeout Defaults vs OCR (Line 184-186)
 
-**Current Text:**
-> DOCLING_SERVICE_TIMEOUT_MS: Default 30000 (30 seconds)
-> TIKA_SERVICE_TIMEOUT_MS: Default 30000 (30 seconds)
+**Status: ✅ RESOLVED**
 
-**Issue:**
-Spec mentions OCR support in Tika image, but OCR can take 60-120s. Default timeout will cause failures.
-
-**Recommended Annotation:**
-```
-⚠️ OCR CONSIDERATION:
-Default 30s timeout assumes NO OCR processing.
-
-If Tika image includes OCR (Tesseract):
-- Scanned PDFs can take 60-120s per page
-- Multi-page scanned documents may exceed timeout
-- Recommendation: Set TIKA_SERVICE_TIMEOUT_MS=120000 (2 min) for OCR workloads
-
-Alternative: Add separate timeout config
-- TIKA_SERVICE_TIMEOUT_MS=30000 (standard documents)
-- TIKA_OCR_TIMEOUT_MS=120000 (scanned/image documents)
-- Route based on MIME type (image/pdf vs application/pdf)
-
-Document: OCR timeout requirements in deployment section
-```
+`TIKA_SERVICE_TIMEOUT_MS` default changed to `120000` (120 seconds) in TECHNICAL_SPEC.md, ENVIRONMENT_VARIABLES.md, and all example configuration blocks. This accommodates OCR workloads by default. Deployments without OCR may reduce this to `30000`.
 
 ---
 

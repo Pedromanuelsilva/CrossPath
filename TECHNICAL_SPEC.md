@@ -134,14 +134,15 @@ This should remain lightweight and request-scoped. CrossPath should not require 
 Fallback chains should be represented as ordered backend lists or equivalent route policy objects rather than single-purpose conditional code. Even if the initial implementation only uses primary plus one fallback, the internal representation should support more than two backends so future parser additions do not require refactoring the routing structure.
 
 ### Fallback Rationale
-The initial design intentionally prefers asymmetric fallback.
+The routing table reflects Docling's supported format set. Every format that Docling supports is routed Docling-first with Tika as fallback. Formats not supported by Docling route directly to Tika with no fallback.
 
 Rationale:
-- Docling-preferred formats may fall back to Tika because Tika is the broader compatibility backend
-- Tika-primary and unknown formats do not automatically retry in Docling because the proxy should avoid speculative second-pass parsing on requests that were not explicitly routed to Docling
-- this keeps failure behavior easier to reason about and avoids doubling latency on classes of documents where Docling was not the planned parser
+- Docling supports a more limited number of file formats than Tika; the routing table encodes exactly which formats Docling can handle
+- All Docling-supported formats use Docling as primary and Tika as fallback, so Tika always catches failures or unsupported edge cases for those formats
+- Formats outside Docling's supported set route directly to Tika; there is no value in attempting Docling for formats it cannot process
+- This approach means the fallback direction is always Docling → Tika, never Tika → Docling, which keeps failure behavior simple and avoids speculative second-pass parsing
 
-If future testing shows that selected Tika-routed formats materially benefit from retrying in Docling, that should be introduced as an explicit route policy or configuration option rather than as an implicit global rule.
+If Docling adds support for additional formats, those formats should be moved from Tika-only to Docling-first in the routing table.
 
 ### Circuit Breaker Behavior
 CrossPath should implement an in-memory circuit breaker per backend and per process.
@@ -311,7 +312,7 @@ Return in a Tika-compatible format for the requested endpoint and negotiated res
 | `DOCLING_SERVICE_URL`        | string | (required)                            | HTTP endpoint of Docling Serve (e.g., `http://docling:5001`)    |
 | `DOCLING_SERVICE_TIMEOUT_MS` | int    | 30000                                 | Request timeout for Docling in milliseconds                     |
 | `TIKA_SERVICE_URL`           | string | (required)                            | HTTP endpoint of Tika Server (e.g., `http://tika:9998`)         |
-| `TIKA_SERVICE_TIMEOUT_MS`    | int    | 30000                                 | Request timeout for Tika in milliseconds                        |
+| `TIKA_SERVICE_TIMEOUT_MS`    | int    | 120000                                | Request timeout for Tika in milliseconds                        |
 | `BUFFER_THRESHOLD_BYTES`     | int    | 52428800                              | Threshold for spooling to temp file (50 MB default)             |
 | `MAX_REQUEST_SIZE_BYTES`     | int    | 524288000                             | Maximum accepted request body size before returning `413`       |
 | `MAX_DOCLING_FILE_SIZE_BYTES` | int   | 104857600                             | Maximum file size eligible for Docling routing                  |
